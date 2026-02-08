@@ -26,12 +26,41 @@ export default function HomeScreen() {
       const { data, error } = await supabase
         .from('games')
         .select('*')
+        .neq('status', 'canceled') // Filter out canceled games
         .order('created_at', { ascending: false });
 
       if (error) {
         console.error('Error fetching games:', error);
       } else {
-        setGames(data || []);
+        // Filter out past games (client-side)
+        const now = new Date();
+        const activeGames = (data || []).filter(game => {
+          if (game.status === 'finished') return false;
+
+          // Build game date object
+          let gameDate = new Date();
+          try {
+            if (game.date) {
+              const [day, month, year] = game.date.split('/').map(Number);
+              if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+                gameDate = new Date(year, month - 1, day);
+
+                if (game.time) {
+                  const [hours, minutes] = game.time.split(':').map(Number);
+                  if (!isNaN(hours) && !isNaN(minutes)) {
+                    gameDate.setHours(hours, minutes, 0, 0);
+                  }
+                }
+              }
+            }
+            // Show if game is in future
+            return gameDate >= now;
+          } catch (e) {
+            return true; // Keep if date parsing fails to be safe
+          }
+        });
+
+        setGames(activeGames);
       }
     } catch (error) {
       console.error('Unexpected error fetching games:', error);
@@ -102,7 +131,10 @@ export default function HomeScreen() {
       </TouchableOpacity>
 
       <View style={styles.actionButtonsContainer}>
-        <TouchableOpacity style={[styles.actionButton, { borderColor: themeColors.primary, borderWidth: 1 }]}>
+        <TouchableOpacity
+          style={[styles.actionButton, { borderColor: themeColors.primary, borderWidth: 1 }]}
+          onPress={() => router.push('/my-games')}
+        >
           <FontAwesome name="list" size={16} color={themeColors.primary} style={{ marginRight: 8 }} />
           <Text style={[styles.actionButtonText, { color: themeColors.primary }]}>Meus Jogos</Text>
         </TouchableOpacity>

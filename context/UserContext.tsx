@@ -143,6 +143,21 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return { error: { message: 'Este nome de utilizador já existe.' } };
         }
 
+        // 1.5. Check if email is already taken using secure RPC function
+        // Ensure email is lowercase for comparison
+        const emailToCheck = email.toLowerCase().trim();
+        const { data: emailExists, error: emailCheckError } = await supabase
+            .rpc('check_email_exists', { email_to_check: emailToCheck });
+
+        if (emailCheckError) {
+            console.error("Error checking email:", emailCheckError);
+            return { error: { message: `Erro ao verificar email: ${emailCheckError.message}` } };
+        }
+
+        if (emailExists) {
+            return { error: { message: 'Este email já está associado a uma conta.' } };
+        }
+
         // 2. Sign up
         const { error, data } = await supabase.auth.signUp({
             email,
@@ -156,7 +171,24 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
         });
 
-        return { error };
+        // 3. Force Profile Update & Sign Out (to require manual login)
+        if (data.user && !error) {
+            // Force update profile to ensure name/username are set correctly
+            // (Handling race condition where trigger might be slow or fail)
+            const { error: profileError } = await supabase
+                .from('profiles')
+                .update({ name, username })
+                .eq('id', data.user.id);
+
+            if (profileError) {
+                console.error("Error updating profile after registration:", profileError);
+            }
+
+            // Sign out immediately so user has to log in manually
+            await supabase.auth.signOut();
+        }
+
+        return { error, data };
     };
 
     const logout = async () => {

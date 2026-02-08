@@ -3,24 +3,49 @@ import { FontAwesome5 } from '@expo/vector-icons';
 import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { Text } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
+import { useUser } from '@/context/UserContext';
 
 export default function RegisterScreen() {
     const colorScheme = useColorScheme();
     const themeColors = Colors[colorScheme ?? 'light'];
+    const { register } = useUser();
     const [name, setName] = useState('');
+    const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [loading, setLoading] = useState(false);
 
-    const handleRegister = () => {
-        // Implement real auth logic here
-        console.log('Registering:', name, email);
-        router.replace('/(tabs)');
+    const handleRegister = async () => {
+        if (!name || !username || !email || !password || !confirmPassword) {
+            Alert.alert('Erro', 'Por favor preencha todos os campos.');
+            return;
+        }
+
+        if (password !== confirmPassword) {
+            Alert.alert('Erro', 'As palavras-passe não coincidem.');
+            return;
+        }
+
+        setLoading(true);
+        // Trim inputs
+        const { error } = await register(name.trim(), username.trim(), email.trim(), password);
+        setLoading(false);
+
+        if (error) {
+            Alert.alert('Erro no Registo', error.message);
+        } else {
+            // Registration successful (and user is signed out by context)
+            Alert.alert('Sucesso', 'Conta criada com sucesso! Por favor, faça login.');
+
+            // Force navigation to login immediately
+            router.replace('/login');
+        }
     };
 
     return (
@@ -55,6 +80,25 @@ export default function RegisterScreen() {
                             placeholderTextColor="#999"
                             value={name}
                             onChangeText={setName}
+                        />
+                    </View>
+
+                    <View style={styles.inputContainer}>
+                        <FontAwesome5 name="at" size={18} color="#999" style={styles.inputIcon} />
+                        <TextInput
+                            style={styles.input}
+                            placeholder="Nome de Utilizador (@)"
+                            placeholderTextColor="#999"
+                            value={username}
+                            onChangeText={(text) => {
+                                // Ensure it starts with @ if user types anything
+                                if (text.length > 0 && !text.startsWith('@')) {
+                                    setUsername('@' + text);
+                                } else {
+                                    setUsername(text);
+                                }
+                            }}
+                            autoCapitalize="none"
                         />
                     </View>
 
@@ -98,8 +142,13 @@ export default function RegisterScreen() {
                     <TouchableOpacity
                         style={[styles.button, { backgroundColor: themeColors.primary }]}
                         onPress={handleRegister}
+                        disabled={loading}
                     >
-                        <Text style={styles.buttonText}>Criar Conta</Text>
+                        {loading ? (
+                            <ActivityIndicator color="#fff" />
+                        ) : (
+                            <Text style={styles.buttonText}>Criar Conta</Text>
+                        )}
                     </TouchableOpacity>
 
                     <View style={styles.footer}>

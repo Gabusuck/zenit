@@ -3,18 +3,19 @@ import { FontAwesome, FontAwesome5, Ionicons, MaterialCommunityIcons } from '@ex
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import React, { useState } from 'react';
-import { Image, Keyboard, Modal, ScrollView, StyleSheet, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
+import { Alert, Image, Keyboard, Modal, ScrollView, StyleSheet, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Text } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
 import { useUser } from '@/context/UserContext';
+import { supabase } from '@/lib/supabase';
 
 export default function ProfileScreen() {
     const colorScheme = useColorScheme();
     const themeColors = Colors[colorScheme ?? 'light'];
-    const { user, updateAvatar, updateProfile } = useUser();
+    const { user, updateAvatar, updateProfile, logout } = useUser();
 
     // UI State
     const [isEditingProfile, setIsEditingProfile] = useState(false); // For details (Position, Foot, etc)
@@ -34,6 +35,70 @@ export default function ProfileScreen() {
     // Picker State
     const [pickerVisible, setPickerVisible] = useState(false);
     const [pickerType, setPickerType] = useState<'position' | 'foot' | 'level' | 'year' | null>(null);
+
+    // Attendance Stats
+    const [missedGamesCount, setMissedGamesCount] = useState(0);
+    const [hasPenalty, setHasPenalty] = useState(false);
+
+    React.useEffect(() => {
+        if (user) {
+            fetchAttendanceStats();
+        }
+    }, [user]);
+
+    const fetchAttendanceStats = async () => {
+        try {
+            // Count total no_shows
+            const { count, error } = await supabase
+                .from('game_players')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', user!.id)
+                .eq('status', 'no_show');
+
+            if (!error) {
+                setMissedGamesCount(count || 0);
+            }
+
+            // Check for penalty (no_show in last 7 days)
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+            const { data: recentNoShows, error: penaltyError } = await supabase
+                .from('game_players')
+                .select('game_id, games(date)')
+                .eq('user_id', user!.id)
+                .eq('status', 'no_show')
+                .gt('created_at', sevenDaysAgo.toISOString()); // Assuming created_at roughly tracks when it happened, or better yet check game date?
+            // The prompt says "se o organizador colocar que a pessoa faltou ... durante 7 dias".
+            // Ideally we check if the GAME DATE was in the last 7 days.
+            // But joining logic is complex here.
+            // Let's rely on checking games where status is no_show, and join game date.
+
+            const { data: penaltyData, error: penaltyDataError } = await supabase
+                .from('game_players')
+                .select(`
+                    game_id,
+                    games (
+                        date
+                    )
+                `)
+                .eq('user_id', user!.id)
+                .eq('status', 'no_show');
+
+            if (!penaltyDataError && penaltyData) {
+                const hasRecent = penaltyData.some((p: any) => {
+                    if (!p.games?.date) return false;
+                    const [day, month, year] = p.games.date.split('/').map(Number);
+                    const gameDate = new Date(year, month - 1, day);
+                    return gameDate >= sevenDaysAgo;
+                });
+                setHasPenalty(hasRecent);
+            }
+
+        } catch (e) {
+            console.error('Error fetching attendance stats:', e);
+        }
+    };
 
     // --- Profile Details Logic ---
     const openProfileEditModal = () => {
@@ -142,13 +207,38 @@ export default function ProfileScreen() {
         }
     };
 
+    const handleLogout = () => {
+        Alert.alert(
+            "Terminar Sessão",
+            "Tens a certeza que queres sair?",
+            [
+                { text: "Cancelar", style: "cancel" },
+                {
+                    text: "Sair",
+                    style: "destructive",
+                    onPress: async () => {
+                        await logout();
+                        router.replace('/'); // Ensure navigation to login/welcome
+                    }
+                }
+            ]
+        );
+    };
+
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: '#f2f2f2' }]} edges={['top']}>
             <ScrollView contentContainerStyle={styles.scrollContainer}>
 
                 {/* Header Section */}
                 <View style={styles.header}>
-                    <TouchableOpacity style={styles.avatarContainer} onPress={pickImage}>
+                    {hasPenalty && (
+                        <View style={styles.penaltyBanner}>
+                            <FontAwesome5 name="exclamation-circle" size={16} color="#fff" style={{ marginRight: 8 }} />
+                            <Text style={styles.penaltyBannerText}>Faltou Recentemente</Text>
+                        </View>
+                    )}
+
+                    <TouchableOpacity style={[styles.avatarContainer, hasPenalty && styles.penaltyAvatarBorder]} onPress={pickImage}>
                         {renderAvatar()}
                         <View style={styles.editBadge}>
                             <FontAwesome5 name="camera" size={12} color="#fff" />
@@ -269,6 +359,30 @@ export default function ProfileScreen() {
                     </View>
                 </View>
 
+                {/* Action Buttons */}
+                <View style={[styles.sectionContainer, { marginTop: 20 }]}>
+                    <TouchableOpacity style={styles.actionButton} onPress={() => alert('Definições: Em breve')}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={[styles.actionIcon, { backgroundColor: '#F5F5F5' }]}>
+                                <FontAwesome5 name="cog" size={16} color="#666" />
+                            </View>
+                            <Text style={styles.actionText}>Definições</Text>
+                        </View>
+                        <FontAwesome5 name="chevron-right" size={14} color="#ccc" />
+                    </TouchableOpacity>
+
+                    <View style={styles.actionDivider} />
+
+                    <TouchableOpacity style={styles.actionButton} onPress={handleLogout}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={[styles.actionIcon, { backgroundColor: '#FFEBEE' }]}>
+                                <FontAwesome5 name="sign-out-alt" size={16} color="#F44336" />
+                            </View>
+                            <Text style={[styles.actionText, { color: '#F44336' }]}>Terminar Sessão</Text>
+                        </View>
+                    </TouchableOpacity>
+                </View>
+
                 {/* Extra space for floating nav */}
                 <View style={{ height: 100 }} />
 
@@ -299,7 +413,14 @@ export default function ProfileScreen() {
                             <TextInput
                                 style={styles.input}
                                 value={username}
-                                onChangeText={setUsername}
+                                onChangeText={(text) => {
+                                    const cleanText = text.replace(/\s/g, '');
+                                    if (cleanText.length > 0 && !cleanText.startsWith('@')) {
+                                        setUsername('@' + cleanText);
+                                    } else {
+                                        setUsername(cleanText);
+                                    }
+                                }}
                                 placeholder="@omeunickname"
                                 placeholderTextColor="#999"
                                 autoCapitalize="none"
@@ -780,5 +901,55 @@ const styles = StyleSheet.create({
     pickerCloseText: {
         color: '#666',
         fontSize: 14,
-    }
+    },
+    penaltyBanner: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#F44336',
+        paddingHorizontal: 20,
+        paddingVertical: 8,
+        borderRadius: 20,
+        marginBottom: 15,
+        shadowColor: '#F44336',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 5,
+        elevation: 6,
+    },
+    penaltyBannerText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: 'bold',
+    },
+    penaltyAvatarBorder: {
+        borderWidth: 3,
+        borderColor: '#F44336',
+        borderRadius: 55, // slightly larger than avatar
+        padding: 2,
+    },
+    // Action Button Styles
+    actionButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 15,
+    },
+    actionIcon: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 15,
+    },
+    actionText: {
+        fontSize: 16,
+        color: '#333',
+        fontWeight: '500',
+    },
+    actionDivider: {
+        height: 1,
+        backgroundColor: '#f0f0f0',
+        marginLeft: 47, // Align with text (32 icon + 15 margin)
+    },
 });

@@ -81,7 +81,8 @@ export default function AuthScreen() {
         const { error } = await register(name, username, email, password);
 
         if (!error) {
-            router.replace('/home');
+            alert('Conta criada com sucesso! Por favor faça login.');
+            changeState('login');
         } else {
             console.log('Register error:', error);
             setError(error.message || 'Erro ao registar.');
@@ -130,7 +131,7 @@ export default function AuthScreen() {
                 <FontAwesome5 name="user" size={18} color="#999" style={styles.inputIcon} />
                 <TextInput
                     style={styles.input}
-                    placeholder="E-mail ou Username"
+                    placeholder="Email"
                     placeholderTextColor="#999"
                     value={email}
                     onChangeText={(text) => { setEmail(text); setError(''); }}
@@ -197,7 +198,14 @@ export default function AuthScreen() {
                     placeholder="Username (@exemplo)"
                     placeholderTextColor="#999"
                     value={username}
-                    onChangeText={(text) => setUsername(text.toLowerCase().replace(/\s/g, ''))}
+                    onChangeText={(text) => {
+                        const cleanText = text.replace(/\s/g, '');
+                        if (cleanText.length > 0 && !cleanText.startsWith('@')) {
+                            setUsername('@' + cleanText);
+                        } else {
+                            setUsername(cleanText);
+                        }
+                    }}
                     autoCapitalize="none"
                 />
             </View>
