@@ -310,14 +310,14 @@ export default function GameDetailsScreen() {
                     </TouchableOpacity>
                 ),
                 headerRight: () => (
-                    user && game && user.id === game.created_by && game.status !== 'canceled' && (
+                    (user && game && user.id === game.created_by && game.status !== 'canceled') ? (
                         <TouchableOpacity
                             onPress={handleCancelGame}
                             style={{ padding: 10, marginRight: 0 }}
                         >
                             <FontAwesome5 name="trash" size={22} color="#fff" />
                         </TouchableOpacity>
-                    )
+                    ) : null
                 ),
             }} />
             <StatusBar style="light" />

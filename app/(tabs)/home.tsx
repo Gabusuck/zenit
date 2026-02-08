@@ -1,6 +1,6 @@
 
 import { FontAwesome } from '@expo/vector-icons';
-import { FlatList, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { FlatList, Image, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Text } from '@/components/Themed';
@@ -25,7 +25,17 @@ export default function HomeScreen() {
     try {
       const { data, error } = await supabase
         .from('games')
-        .select('*')
+        .select(`
+          *,
+          game_players (
+            user_id,
+            status,
+            profiles (
+              avatar_url,
+              name
+            )
+          )
+        `)
         .neq('status', 'canceled') // Filter out canceled games
         .order('created_at', { ascending: false });
 
@@ -79,43 +89,97 @@ export default function HomeScreen() {
     }, [])
   );
 
-  const renderItem = ({ item }: { item: any }) => (
-    <TouchableOpacity
-      style={styles.card}
-      activeOpacity={0.9}
-      onPress={() => router.push(`/game/${item.id}`)}
-    >
-      <View style={[styles.cardHeader, { backgroundColor: 'transparent' }]}>
-        <Text style={styles.cardTitle}>{item.location}</Text>
-        <FontAwesome name="soccer-ball-o" size={16} color="#000" />
-      </View>
+  const renderItem = ({ item }: { item: any }) => {
+    // Process Participants
+    const participants = item.game_players || [];
+    // Sort to put current user first if present
+    const sortedParticipants = [...participants].sort((a, b) => {
+      if (a.user_id === user?.id) return -1;
+      if (b.user_id === user?.id) return 1;
+      return 0;
+    });
 
-      <Text style={styles.cardTime}>{item.date} às {item.time ? item.time.slice(0, 5) : ''}</Text>
-      <Text style={[styles.cardSlots, { color: themeColors.primary }]}>{item.filled_slots} / {item.total_slots} Vagas Preenchidas</Text>
-      <Text style={{ fontSize: 12, color: '#666', marginBottom: 5 }}>Presença: {item.price}€</Text>
+    const displayCount = Math.min(participants.length, 4);
+    const isParticipating = participants.some((p: any) => p.user_id === user?.id);
 
-      <View style={styles.cardFooter}>
-        {/* Avatars Section - Mocked for now until we have constraints/joins */}
-        <View style={styles.avatarContainer}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            {/* For now, just show a placeholder since we don't have participants table yet */}
-            <View style={[styles.avatar, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#e0e0e0', borderWidth: 0 }]}>
-              <FontAwesome name="user" size={12} color="#999" />
-            </View>
-            <Text style={styles.slotsText}>{item.filled_slots} jogadores</Text>
-          </View>
+    return (
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={0.9}
+        onPress={() => router.push(`/game/${item.id}`)}
+      >
+        <View style={[styles.cardHeader, { backgroundColor: 'transparent' }]}>
+          <Text style={styles.cardTitle}>{item.location}</Text>
+          <FontAwesome name="soccer-ball-o" size={16} color="#000" />
         </View>
 
-        {/* Join Button */}
-        <TouchableOpacity
-          style={[styles.joinButton, { backgroundColor: themeColors.primary }]}
-          onPress={() => router.push(`/game/${item.id}`)}
-        >
-          <Text style={styles.joinButtonText}>Juntar-me</Text>
-        </TouchableOpacity>
-      </View>
-    </TouchableOpacity>
-  );
+        <Text style={styles.cardTime}>{item.date} às {item.time ? item.time.slice(0, 5) : ''}</Text>
+        <Text style={[styles.cardSlots, { color: themeColors.primary }]}>{item.filled_slots} / {item.total_slots} Vagas Preenchidas</Text>
+        <Text style={{ fontSize: 12, color: '#666', marginBottom: 5 }}>Presença: {item.price}€</Text>
+
+        <View style={styles.cardFooter}>
+          {/* Avatars Section */}
+          <View style={styles.avatarContainer}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {/* Real Face Pile */}
+              {sortedParticipants.slice(0, 4).map((player: any, index: number) => (
+                <Image
+                  key={player.user_id}
+                  source={{ uri: player.profiles?.avatar_url || `https://i.pravatar.cc/150?u=${player.user_id}` }}
+                  style={[
+                    styles.avatar,
+                    {
+                      marginLeft: index === 0 ? 0 : -12,
+                      zIndex: 4 - index,
+                      borderWidth: 2,
+                      borderColor: '#fff'
+                    }
+                  ]}
+                />
+              ))}
+
+              {/* Overflow Count if > 4 */}
+              {participants.length > 4 && (
+                <View style={[styles.moreAvatars, { marginLeft: -12, zIndex: 0 }]}>
+                  <Text style={styles.moreAvatarsText}>+{participants.length - 4}</Text>
+                </View>
+              )}
+
+              {/* If no participants, show placeholder or text */}
+              {participants.length === 0 && (
+                <View style={[styles.avatar, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#e0e0e0', borderWidth: 1, borderColor: '#fff' }]}>
+                  <FontAwesome name="user" size={12} color="#999" />
+                </View>
+              )}
+
+              <Text style={styles.slotsText}>
+                {item.filled_slots === 0 ? 'Sem jogadores' :
+                  item.filled_slots === 1 ? '1 jogador' :
+                    `${item.filled_slots} jogadores`}
+              </Text>
+            </View>
+          </View>
+
+          {/* Join Button */}
+          <TouchableOpacity
+            style={[
+              styles.joinButton,
+              { backgroundColor: isParticipating ? '#fff' : themeColors.primary },
+              isParticipating && { borderWidth: 1, borderColor: themeColors.primary }
+            ]}
+            onPress={() => router.push(`/game/${item.id}`)}
+          >
+            <Text style={[
+              styles.joinButtonText,
+              isParticipating && { color: themeColors.primary }
+            ]}>
+              {isParticipating ? 'Inscrito' : 'Juntar-me'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   const Header = () => (
     <View style={styles.headerContainer}>
