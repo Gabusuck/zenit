@@ -44,7 +44,7 @@ export default function CreateGameScreen() {
         const formattedTime = time.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
 
         try {
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('games')
                 .insert({
                     created_by: user.id,
@@ -53,11 +53,31 @@ export default function CreateGameScreen() {
                     time: formattedTime,
                     price: parseFloat(price.replace(',', '.')),
                     total_slots: parseInt(totalSlots),
-                    filled_slots: 1, // Creator automatically joins? For now lets say yes or just 0
+                    filled_slots: 0, // Will be incremented by trigger when we add the player
                     description: description
-                });
+                })
+                .select()
+                .single();
 
-            if (error) {
+            if (data) {
+                // Add creator as first participant
+                const { error: participantError } = await supabase
+                    .from('game_players')
+                    .insert({
+                        game_id: data.id,
+                        user_id: user.id,
+                        status: 'confirmed'
+                    });
+
+                if (participantError) {
+                    console.error('Error adding creator to game:', participantError);
+                    // Optional: revert game creation? or just alert
+                    alert('Jogo criado, mas erro ao adicionar participante.');
+                } else {
+                    alert('Jogo criado com sucesso! ⚽');
+                    router.back();
+                }
+            } else if (error) {
                 console.error('Error creating game:', error);
                 alert('Erro ao criar o jogo. Tente novamente.');
             } else {
@@ -118,6 +138,11 @@ export default function CreateGameScreen() {
                 headerStyle: { backgroundColor: themeColors.primary },
                 headerTintColor: '#fff',
                 headerTitleStyle: { fontWeight: 'bold' },
+                headerLeft: () => (
+                    <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: 10 }}>
+                        <FontAwesome5 name="arrow-left" size={20} color="#fff" />
+                    </TouchableOpacity>
+                ),
             }} />
             <StatusBar style="light" />
 

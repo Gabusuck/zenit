@@ -1,9 +1,9 @@
 
 import { FontAwesome5 } from '@expo/vector-icons';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Image, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 
 import { Text } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -18,10 +18,14 @@ export default function GameDetailsScreen() {
     const { user } = useUser();
 
     const [game, setGame] = useState<any>(null);
+    const [players, setPlayers] = useState<any[]>([]);
+    const [isJoined, setIsJoined] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [joining, setJoining] = useState(false);
 
     useEffect(() => {
         fetchGameDetails();
+        fetchPlayers();
     }, [id]);
 
     const fetchGameDetails = async () => {
@@ -30,7 +34,7 @@ export default function GameDetailsScreen() {
         try {
             const { data, error } = await supabase
                 .from('games')
-                .select('*')
+                .select('*, profiles:created_by(name, username, avatar_url)')
                 .eq('id', id)
                 .single();
 
@@ -43,6 +47,87 @@ export default function GameDetailsScreen() {
             console.error('Unexpected error:', error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const fetchPlayers = async () => {
+        if (!id) return;
+
+        try {
+            // Fetch players and their profile info
+            const { data, error } = await supabase
+                .from('game_players')
+                .select('user_id, status, profiles(name, username, avatar_url)')
+                .eq('game_id', id);
+
+            if (error) {
+                console.error('Error fetching players:', error);
+            } else {
+                const formattedPlayers = data.map((item: any) => ({
+                    ...item.profiles,
+                    status: item.status
+                }));
+                setPlayers(formattedPlayers || []);
+
+                // Check if current user is joined
+                if (user) {
+                    const isUserJoined = data.some((p: any) => p.user_id === user.id);
+                    setIsJoined(isUserJoined);
+                }
+            }
+        } catch (error) {
+            console.error('Unexpected error fetching players:', error);
+        }
+    };
+
+    const handleJoinGame = async () => {
+        if (!user || !game) {
+            if (!user) alert('Tens de fazer login primeiro.');
+            return;
+        }
+        setJoining(true);
+
+        try {
+            if (isJoined) {
+                // Leave Game
+                const { error } = await supabase
+                    .from('game_players')
+                    .delete()
+                    .eq('game_id', id)
+                    .eq('user_id', user.id);
+
+                if (error) throw error;
+                setIsJoined(false);
+                alert('Saíste do jogo.');
+            } else {
+                // Join Game
+                if (game.filled_slots >= game.total_slots) {
+                    alert('O jogo está cheio!');
+                    return;
+                }
+
+                const { error } = await supabase
+                    .from('game_players')
+                    .insert({
+                        game_id: id,
+                        user_id: user.id,
+                        status: 'confirmed'
+                    });
+
+                if (error) throw error;
+                setIsJoined(true);
+                alert('Estás inscrito! ⚽');
+            }
+
+            // Refresh data
+            fetchGameDetails(); // To get updated slots
+            fetchPlayers();
+
+        } catch (error) {
+            console.error('Error joining/leaving game:', error);
+            alert('Erro ao atualizar inscrição: ' + (error instanceof Error ? error.message : 'Erro desconhecido'));
+        } finally {
+            setJoining(false);
         }
     };
 
@@ -69,6 +154,11 @@ export default function GameDetailsScreen() {
                 headerStyle: { backgroundColor: themeColors.primary },
                 headerTintColor: '#fff',
                 headerTitleStyle: { fontWeight: 'bold' },
+                headerLeft: () => (
+                    <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: 10 }}>
+                        <FontAwesome5 name="arrow-left" size={20} color="#fff" />
+                    </TouchableOpacity>
+                ),
             }} />
             <StatusBar style="light" />
 
@@ -109,6 +199,27 @@ export default function GameDetailsScreen() {
                     </View>
                 </View>
 
+                {/* Players List */}
+                <View style={styles.card}>
+                    <Text style={styles.sectionTitle}>Jogadores ({players.length})</Text>
+                    {players.length > 0 ? (
+                        players.map((player, index) => (
+                            <View key={index} style={styles.playerRow}>
+                                <Image
+                                    source={{ uri: player.avatar_url || 'https://via.placeholder.com/150' }}
+                                    style={styles.playerAvatar}
+                                />
+                                <View style={{ marginLeft: 10 }}>
+                                    <Text style={styles.playerName}>{player.name || 'Jogador'}</Text>
+                                    <Text style={styles.playerUsername}>{player.username || '@jogador'}</Text>
+                                </View>
+                            </View>
+                        ))
+                    ) : (
+                        <Text style={{ color: '#999', fontStyle: 'italic' }}>Ainda ninguém se inscreveu. Sê o primeiro!</Text>
+                    )}
+                </View>
+
                 {/* Description */}
                 {game.description && (
                     <View style={styles.card}>
@@ -117,16 +228,17 @@ export default function GameDetailsScreen() {
                     </View>
                 )}
 
-                {/* Creator Info (Future: Fetch actual profile) */}
+                {/* Creator Info */}
                 <View style={styles.card}>
                     <Text style={styles.sectionTitle}>Organizador</Text>
                     <View style={styles.organizerRow}>
-                        <View style={styles.avatarPlaceholder}>
-                            <FontAwesome5 name="user" size={20} color="#999" />
-                        </View>
-                        <View>
-                            <Text style={styles.organizerName}>Organizador</Text>
-                            <Text style={styles.organizerLabel}>Criador do jogo</Text>
+                        <Image
+                            source={{ uri: game.profiles?.avatar_url || 'https://via.placeholder.com/150' }}
+                            style={[styles.playerAvatar, { width: 50, height: 50, borderRadius: 25 }]}
+                        />
+                        <View style={{ marginLeft: 15 }}>
+                            <Text style={styles.organizerName}>{game.profiles?.name || 'Organizador'}</Text>
+                            <Text style={styles.organizerLabel}>@{game.profiles?.username || 'user'}</Text>
                         </View>
                     </View>
                 </View>
@@ -135,8 +247,18 @@ export default function GameDetailsScreen() {
 
             {/* Bottom Action Bar */}
             <View style={styles.bottomBar}>
-                <TouchableOpacity style={[styles.joinButton, { backgroundColor: themeColors.primary }]}>
-                    <Text style={styles.joinButtonText}>Juntar-me ao Jogo</Text>
+                <TouchableOpacity
+                    style={[styles.joinButton, { backgroundColor: isJoined ? '#F44336' : themeColors.primary, opacity: joining ? 0.7 : 1 }]}
+                    onPress={handleJoinGame}
+                    disabled={joining}
+                >
+                    {joining ? (
+                        <ActivityIndicator color="#fff" />
+                    ) : (
+                        <Text style={styles.joinButtonText}>
+                            {isJoined ? 'Sair do Jogo' : 'Juntar-me ao Jogo'}
+                        </Text>
+                    )}
                 </TouchableOpacity>
             </View>
         </View>
@@ -216,6 +338,29 @@ const styles = StyleSheet.create({
     slotsText: {
         fontSize: 14,
         color: '#666',
+    },
+    playerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 15,
+        paddingBottom: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#f0f0f0',
+    },
+    playerAvatar: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#eee',
+    },
+    playerName: {
+        fontSize: 15,
+        fontWeight: 'bold',
+        color: '#333',
+    },
+    playerUsername: {
+        fontSize: 12,
+        color: '#777',
     },
     descriptionText: {
         fontSize: 15,

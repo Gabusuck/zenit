@@ -29,13 +29,19 @@ export default function RegisterScreen() {
             style={styles.container}
         >
             <StatusBar style="dark" />
-            <Stack.Screen options={{ headerShown: false }} />
+            <Stack.Screen options={{
+                title: 'Registar',
+                headerStyle: { backgroundColor: '#fff' },
+                headerShadowVisible: false,
+                headerLeft: () => (
+                    <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: 10 }}>
+                        <FontAwesome5 name="arrow-left" size={20} color="#333" />
+                    </TouchableOpacity>
+                ),
+            }} />
 
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 <View style={styles.header}>
-                    <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                        <FontAwesome5 name="arrow-left" size={20} color="#333" />
-                    </TouchableOpacity>
                     <Text style={styles.title}>Cria a tua conta</Text>
                     <Text style={styles.subtitle}>Junta-te à comunidade Zenit!</Text>
                 </View>

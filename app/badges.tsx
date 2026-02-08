@@ -1,6 +1,6 @@
 
 import { FontAwesome5 } from '@expo/vector-icons';
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import { useState } from 'react';
 import { FlatList, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -63,7 +63,16 @@ export default function BadgesScreen() {
 
     return (
         <SafeAreaView style={styles.container} edges={['bottom']}>
-            <Stack.Screen options={{ title: 'Conquistas', headerStyle: { backgroundColor: '#f2f2f2' }, headerShadowVisible: false }} />
+            <Stack.Screen options={{
+                title: 'Conquistas',
+                headerStyle: { backgroundColor: '#f2f2f2' },
+                headerShadowVisible: false,
+                headerLeft: () => (
+                    <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: 10 }}>
+                        <FontAwesome5 name="arrow-left" size={20} color="#333" />
+                    </TouchableOpacity>
+                ),
+            }} />
 
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>As tuas Medalhas</Text>

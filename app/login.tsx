@@ -27,12 +27,18 @@ export default function LoginScreen() {
             style={styles.container}
         >
             <StatusBar style="dark" />
-            <Stack.Screen options={{ headerShown: false }} />
+            <Stack.Screen options={{
+                title: 'Login',
+                headerStyle: { backgroundColor: '#fff' },
+                headerShadowVisible: false,
+                headerLeft: () => (
+                    <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: 10 }}>
+                        <FontAwesome5 name="arrow-left" size={20} color="#333" />
+                    </TouchableOpacity>
+                ),
+            }} />
 
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                    <FontAwesome5 name="arrow-left" size={20} color="#333" />
-                </TouchableOpacity>
                 <Text style={styles.title}>Bem-vindo de volta!</Text>
                 <Text style={styles.subtitle}>Pronto para entrar em campo?</Text>
             </View>
