@@ -150,7 +150,7 @@ export default function HomeScreen() {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: '#f2f2f2' }]} edges={['top']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: themeColors.background }]} edges={['top']}>
       <FlatList
         data={games}
         renderItem={renderItem}
@@ -186,7 +186,7 @@ const styles = StyleSheet.create({
   logoText: {
     fontSize: 32,
     fontWeight: '900',
-    color: '#2196F3', // Blue color for Zenit logo as in mockup
+    color: '#4CAF50', // Zenit Green
     marginBottom: 5,
     textAlign: 'center',
   },

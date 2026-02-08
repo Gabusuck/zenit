@@ -381,13 +381,13 @@ const styles = StyleSheet.create({
     inputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#E8F5E9', // Light green bg for inputs
+        backgroundColor: '#F1F8E9', // Light Green Tint
         borderRadius: 12,
         paddingHorizontal: 15,
         marginBottom: 15,
         height: 50,
         borderWidth: 1,
-        borderColor: '#4CAF50', // Green border
+        borderColor: '#C8E6C9', // Softer Green Border
     },
     inputIcon: {
         marginRight: 10,
@@ -403,7 +403,7 @@ const styles = StyleSheet.create({
     },
     button: {
         height: 50,
-        borderRadius: 25,
+        borderRadius: 12,
         justifyContent: 'center',
         alignItems: 'center',
         width: '100%',
@@ -414,13 +414,12 @@ const styles = StyleSheet.create({
         elevation: 3,
     },
     outlineButton: {
-        backgroundColor: '#1B5E20', // Dark green for register on landing? Or just dark grey?
-        // Mockup shows Dark button for Register on Landing
+        backgroundColor: '#388E3C', // Darker Green for contrast
     },
     buttonText: {
         color: '#fff',
-        fontSize: 18,
-        fontWeight: 'bold',
+        fontSize: 16,
+        fontWeight: '600',
     },
     footerRow: {
         flexDirection: 'row',

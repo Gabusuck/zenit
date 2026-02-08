@@ -226,7 +226,7 @@ export default function ProfileScreen() {
     };
 
     return (
-        <SafeAreaView style={[styles.container, { backgroundColor: '#f2f2f2' }]} edges={['top']}>
+        <SafeAreaView style={[styles.container, { backgroundColor: themeColors.background }]} edges={['top']}>
             <ScrollView contentContainerStyle={styles.scrollContainer}>
 
                 {/* Header Section */}
@@ -648,7 +648,7 @@ const styles = StyleSheet.create({
         marginTop: -15, // Overlap avatar slightly? Or just below
         marginBottom: 10,
         borderWidth: 2,
-        borderColor: '#f2f2f2',
+        borderColor: '#F5F5F5',
         zIndex: 1,
     },
     levelText: {
@@ -683,16 +683,17 @@ const styles = StyleSheet.create({
     },
     username: {
         fontSize: 14,
-        color: '#999',
+        color: '#666',
         marginBottom: 10,
     },
     ratingContainer: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
     },
     ratingCount: {
         fontSize: 12,
-        color: '#999',
+        color: '#666',
     },
     statsCard: {
         flexDirection: 'row',
