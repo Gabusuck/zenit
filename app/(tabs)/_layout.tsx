@@ -1,13 +1,12 @@
 
 import { Ionicons } from '@expo/vector-icons';
-import { MaterialTopTabBar, createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
+import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { BlurView } from 'expo-blur';
 import { withLayoutContext } from 'expo-router';
 import React from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, View } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
-import Colors from '@/constants/Colors';
 
 // Create the Material Top Tab Navigator
 const { Navigator } = createMaterialTopTabNavigator();
@@ -15,90 +14,117 @@ const { Navigator } = createMaterialTopTabNavigator();
 // Wrap it with expo-router context
 export const MaterialTopTabs = withLayoutContext(Navigator);
 
-function TabBarIcon(props: {
-  name: React.ComponentProps<typeof Ionicons>['name'];
-  color: string;
-  style?: any;
-}) {
-  return <Ionicons size={24} style={[{ marginBottom: 0 }, props.style]} {...props} />;
+// Create animated component outside to avoid recreation
+const AnimatedIonicons = Animated.createAnimatedComponent(Ionicons);
+
+function CustomTabBar({ state, descriptors, navigation, position }: any) {
+  return (
+    <View style={styles.floatingTabBarContainer}>
+      <BlurView intensity={80} tint="light" style={StyleSheet.absoluteFill} />
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255, 255, 255, 0.1)' }]} />
+
+      <View style={styles.tabContentContainer}>
+        {state.routes.map((route: any, index: number) => {
+          const { options } = descriptors[route.key];
+          const isFocused = state.index === index;
+
+          const onPress = () => {
+            const event = navigation.emit({
+              type: 'tabPress',
+              target: route.key,
+              canPreventDefault: true,
+            });
+
+            if (!isFocused && !event.defaultPrevented) {
+              navigation.navigate(route.name);
+            }
+          };
+
+          // Animations
+          const inputRange = state.routes.map((_: any, i: number) => i);
+
+          // Active State Opacity (0 -> 1 -> 0)
+          const activeOpacity = position.interpolate({
+            inputRange,
+            outputRange: inputRange.map((i: number) => (i === index ? 1 : 0)),
+          });
+
+          // Inactive State Opacity (1 -> 0 -> 1)
+          const inactiveOpacity = position.interpolate({
+            inputRange,
+            outputRange: inputRange.map((i: number) => (i === index ? 0 : 1)),
+          });
+
+          // Define Icon Names for Animation Layers
+          let outlineIcon: React.ComponentProps<typeof Ionicons>['name'] = 'help-outline';
+          let filledIcon: React.ComponentProps<typeof Ionicons>['name'] = 'help-circle';
+
+          if (route.name === 'chat') {
+            outlineIcon = 'chatbox-outline';
+            filledIcon = 'chatbox';
+          } else if (route.name === 'home') {
+            outlineIcon = 'home-outline';
+            filledIcon = 'home';
+          } else if (route.name === 'profile') {
+            outlineIcon = 'person-outline';
+            filledIcon = 'person';
+          }
+
+          return (
+            <Pressable
+              key={index}
+              onPress={onPress}
+              style={styles.tabItem}
+            >
+              {/* Animated Bubble Background */}
+              <Animated.View
+                style={[
+                  StyleSheet.absoluteFill,
+                  {
+                    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+                    borderRadius: 25,
+                    opacity: activeOpacity, // Smooth fade in/out
+                  },
+                ]}
+              />
+
+              {/* Icon Container for Cross-Fade */}
+              <View style={{ width: 26, height: 26, justifyContent: 'center', alignItems: 'center' }}>
+                {/* Grey Outline Icon (Fades Out) */}
+                <Animated.View style={{ position: 'absolute', opacity: inactiveOpacity }}>
+                  <Ionicons name={outlineIcon} size={26} color="#8E8E93" />
+                </Animated.View>
+
+                {/* Green Filled Icon (Fades In) */}
+                <Animated.View style={{ position: 'absolute', opacity: activeOpacity }}>
+                  <Ionicons name={filledIcon} size={26} color="#4CAF50" />
+                </Animated.View>
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
 }
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const primaryColor = Colors[colorScheme ?? 'light'].primary;
 
   return (
     <MaterialTopTabs
       tabBarPosition="bottom"
       initialRouteName="home"
-      tabBar={(props) => (
-        <View style={styles.floatingTabBarContainer}>
-          <BlurView intensity={Platform.OS === 'ios' ? 100 : 50} tint="light" style={StyleSheet.absoluteFill} />
-          {/* Liquid Glass Layer - More Transparent */}
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255, 255, 255, 0.05)' }]} />
-          <MaterialTopTabBar
-            {...props}
-          />
-        </View>
-      )}
+      tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
-        tabBarActiveTintColor: '#4CAF50', // Zenit Green
-        tabBarInactiveTintColor: '#666', // Softer Grey for Glass
-        tabBarShowLabel: false,
-        tabBarLabelStyle: {
-          fontSize: 10,
-          fontWeight: '600',
-          textTransform: 'capitalize',
-          marginTop: -5,
-        },
-        tabBarItemStyle: {
-          justifyContent: 'center',
-          alignItems: 'center',
-          flex: 1, // Ensure each tab takes equal space
-          // Removed paddingBottom here as it was causing issues
-        },
-        tabBarContentContainerStyle: {
-          flex: 1, // Ensure container fills the width
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center', // Center content nicely
-          height: 70,
-        },
-        tabBarStyle: {
-          backgroundColor: 'transparent',
-          elevation: 0,
-          shadowOpacity: 0,
-          width: '100%', // Ensure bar takes full width of container
-        },
-        tabBarIndicatorStyle: {
-          height: 0, // Remove the underline indicator
-          backgroundColor: 'transparent',
-        },
-        swipeEnabled: false, // Disable swipe to ensure static centered tabs
+        tabBarScrollEnabled: false,
+        swipeEnabled: true,
         animationEnabled: true,
       }}
     >
-      <MaterialTopTabs.Screen
-        name="chat"
-        options={{
-          tabBarLabel: 'Chat',
-          tabBarIcon: ({ color, focused }: { color: string; focused: boolean }) => <TabBarIcon name={focused ? "chatbox" : "chatbox-outline"} color={color} style={{ top: -15 }} />,
-        }}
-      />
-      <MaterialTopTabs.Screen
-        name="home"
-        options={{
-          tabBarLabel: 'Início',
-          tabBarIcon: ({ color, focused }: { color: string; focused: boolean }) => <TabBarIcon name={focused ? "home" : "home-outline"} color={color} style={{ top: -15 }} />,
-        }}
-      />
-      <MaterialTopTabs.Screen
-        name="profile"
-        options={{
-          tabBarLabel: 'Perfil',
-          tabBarIcon: ({ color, focused }: { color: string; focused: boolean }) => <TabBarIcon name={focused ? "person" : "person-outline"} color={color} style={{ top: -15 }} />,
-        }}
-      />
+      <MaterialTopTabs.Screen name="chat" options={{ tabBarLabel: 'Chat' }} />
+      <MaterialTopTabs.Screen name="home" options={{ tabBarLabel: 'Início' }} />
+      <MaterialTopTabs.Screen name="profile" options={{ tabBarLabel: 'Perfil' }} />
     </MaterialTopTabs >
   );
 }
@@ -106,23 +132,41 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
   floatingTabBarContainer: {
     position: 'absolute',
-    bottom: 25,
-    left: 40,
-    right: 40,
-    borderRadius: 40,
-    overflow: 'hidden',
+    bottom: 30,
+    left: 50,
+    right: 50,
     height: 70,
-    // Glass Border
-    borderWidth: 2, // Thicker border for more definition
-    borderColor: 'rgba(255,255,255,0.9)', // Almost white border
-    // Shadow
+    borderRadius: 35,
+    overflow: 'hidden',
+    // High Transparency
+    backgroundColor: 'transparent', // Let BlurView handle the background
+    borderWidth: 1.5, // Slightly thicker
+    borderColor: 'rgba(255, 255, 255, 0.9)', // Very Bright White Glow
+    // Deep Shadow for "Pop"
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
-      height: 12, // Deeper shadow
+      height: 10,
     },
-    shadowOpacity: 0.4, // Much darker shadow for max pop
-    shadowRadius: 20, // Wider spread
-    elevation: 12,
+    shadowOpacity: 0.25,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  tabContentContainer: {
+    flexDirection: 'row',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    paddingHorizontal: 10,
+  },
+  tabItem: {
+    height: 50,
+    width: 70,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 25,
+  },
+  tabItemFocused: {
+    backgroundColor: 'rgba(0, 0, 0, 0.05)', // Light Grey Bubble as requested
   },
 });
