@@ -21,6 +21,7 @@ type User = {
     foot: string;
     age: string;
     birthYear?: string;
+    featuredBadgeId?: string;
 };
 
 type UserContextType = {
@@ -79,6 +80,32 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
 
             if (data) {
+                // Calculate Punctuality/Attendance
+                let attendanceValue = data.attendance || '-';
+                try {
+                    const { data: attendanceData, error: attendanceError } = await supabase
+                        .from('game_players')
+                        .select('status')
+                        .eq('user_id', userId)
+                        .in('status', ['attended', 'no_show']);
+
+                    if (!attendanceError && attendanceData && attendanceData.length > 0) {
+                        const total = attendanceData.length;
+                        const attended = attendanceData.filter((p: any) => p.status === 'attended').length;
+                        const percentage = Math.round((attended / total) * 100);
+                        attendanceValue = `${percentage}%`;
+
+                        // Optional: Persist back to profile if different (fire and forget)
+                        if (data.attendance !== attendanceValue) {
+                            supabase.from('profiles').update({ attendance: attendanceValue }).eq('id', userId).then();
+                        }
+                    } else if (!attendanceData || attendanceData.length === 0) {
+                        attendanceValue = '100%';
+                    }
+                } catch (e) {
+                    console.error('Error calculating attendance:', e);
+                }
+
                 setUser({
                     id: userId,
                     email: email,
@@ -90,12 +117,13 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     rating: data.rating || 0,
                     ratingCount: data.rating_count || 0,
                     gamesPlayed: data.games_played || 0,
-                    attendance: data.attendance || '-',
+                    attendance: attendanceValue,
                     punctuality: data.punctuality || '-',
                     position: data.position || '-',
                     foot: data.foot || '-',
                     age: data.age || '-',
                     birthYear: data.birth_year,
+                    featuredBadgeId: data.featured_badge_id,
                 });
             }
         } catch (error) {
@@ -275,6 +303,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             foot: data.foot,
             age: data.age,
             birth_year: data.birthYear,
+            featured_badge_id: data.featuredBadgeId,
             updated_at: new Date(),
         };
 
@@ -283,7 +312,10 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .update(updates)
             .eq('id', user.id);
 
-        if (error) console.error('Error updating profile:', error);
+        if (error) {
+            console.error('Error updating profile:', JSON.stringify(error, null, 2));
+            alert('Erro ao atualizar perfil: ' + (error.message || 'Erro desconhecido'));
+        }
     }
 
     return (

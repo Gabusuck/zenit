@@ -6,8 +6,10 @@ import React, { useState } from 'react';
 import { Alert, Image, Keyboard, Modal, ScrollView, StyleSheet, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import AttendanceModal from '@/components/AttendanceModal';
 import { Text } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
+import { BADGES } from '@/constants/Badges';
 import Colors from '@/constants/Colors';
 import { useUser } from '@/context/UserContext';
 import { supabase } from '@/lib/supabase';
@@ -17,9 +19,13 @@ export default function ProfileScreen() {
     const themeColors = Colors[colorScheme ?? 'light'];
     const { user, updateAvatar, updateProfile, logout } = useUser();
 
+
+
     // UI State
     const [isEditingProfile, setIsEditingProfile] = useState(false); // For details (Position, Foot, etc)
     const [isEditingName, setIsEditingName] = useState(false);       // For Name/Username
+    const [isBadgePickerVisible, setIsBadgePickerVisible] = useState(false); // For Badge Selection
+    const [isAttendanceModalVisible, setIsAttendanceModalVisible] = useState(false);
 
     // Edit Form State - Profile Details
     const [position, setPosition] = useState('');
@@ -140,6 +146,16 @@ export default function ProfileScreen() {
             username
         });
         setIsEditingName(false);
+    };
+
+    // --- Badge Logic ---
+    const handleSelectBadge = (badge: any) => {
+        if (!badge.earned) {
+            Alert.alert("Bloqueado", "Ainda não desbloqueaste esta medalha!");
+            return;
+        }
+        updateProfile({ featuredBadgeId: badge.id });
+        setIsBadgePickerVisible(false);
     };
 
     // --- Avatar Logic ---
@@ -289,24 +305,55 @@ export default function ProfileScreen() {
 
                     <View style={styles.statDivider} />
 
-                    <TouchableOpacity style={styles.statItem} onPress={() => router.push('/badges')}>
+                    <TouchableOpacity style={styles.statItem} onPress={() => setIsBadgePickerVisible(true)}>
                         <View style={[styles.iconCircle, { backgroundColor: '#fff8e1' }]}>
-                            <FontAwesome5 name="trophy" size={20} color="#FFC107" />
+                            {user?.featuredBadgeId ? (
+                                (() => {
+                                    const badge = BADGES.find(b => b.id === user.featuredBadgeId);
+                                    return badge ? (
+                                        <FontAwesome5 name={badge.icon} size={20} color={badge.color} />
+                                    ) : (
+                                        <FontAwesome5 name="trophy" size={20} color="#FFC107" />
+                                    );
+                                })()
+                            ) : (
+                                <FontAwesome5 name="trophy" size={20} color="#FFC107" />
+                            )}
+
                         </View>
-                        <Text style={styles.statValue}>Conquistas</Text>
-                        <Text style={styles.statLabel}>Ver todas</Text>
+                        {user?.featuredBadgeId ? (
+                            <Text style={{ fontSize: 12, color: '#666', textAlign: 'center', marginTop: 2 }}>
+                                {BADGES?.find(b => b.id === user.featuredBadgeId)?.name || 'Conquistas'}
+                            </Text>
+                        ) : (
+                            <Text style={styles.statValue}>Conquistas</Text>
+                        )}
+                        {!user?.featuredBadgeId && (
+                            <Text style={styles.statLabel}>Ver todas</Text>
+                        )}
                     </TouchableOpacity>
 
                     <View style={styles.statDivider} />
 
-                    <View style={styles.statItem}>
+
+
+                    <TouchableOpacity
+                        style={styles.statItem}
+                        onPress={() => setIsAttendanceModalVisible(true)}
+                    >
                         <View style={[styles.iconCircle, { backgroundColor: '#e3f2fd' }]}>
-                            <MaterialCommunityIcons name="clock-time-four-outline" size={24} color="#2196F3" />
+                            <MaterialCommunityIcons name="calendar-check" size={24} color="#2196F3" />
                         </View>
-                        <Text style={styles.statValue}>{user?.punctuality || '-'}</Text>
-                        <Text style={styles.statLabel}>Pontualidade</Text>
-                    </View>
+                        <Text style={styles.statValue}>{user?.attendance || '-'}</Text>
+                        <Text style={styles.statLabel}>Assiduidade</Text>
+                    </TouchableOpacity>
                 </View>
+
+                <AttendanceModal
+                    visible={isAttendanceModalVisible}
+                    onClose={() => setIsAttendanceModalVisible(false)}
+                    attendance={user?.attendance || '-'}
+                />
 
                 {/* Player Details */}
                 <View style={styles.sectionContainer}>
@@ -582,6 +629,62 @@ export default function ProfileScreen() {
                             </View>
                         )}
 
+                    </View>
+                </View>
+            </Modal>
+            {/* --- BADGE PICKER MODAL --- */}
+            <Modal
+                animationType="slide"
+                transparent={true}
+                visible={isBadgePickerVisible}
+                onRequestClose={() => setIsBadgePickerVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, { maxHeight: '80%' }]}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+                            <Text style={styles.modalTitle}>Escolher Medalha</Text>
+                            <TouchableOpacity onPress={() => setIsBadgePickerVisible(false)}>
+                                <FontAwesome5 name="times" size={20} color="#999" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <Text style={{ textAlign: 'center', color: '#666', marginBottom: 20 }}>
+                            Escolhe uma medalha para exibir no teu perfil.
+                        </Text>
+
+                        <ScrollView>
+                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+                                {BADGES.map((badge) => (
+                                    <TouchableOpacity
+                                        key={badge.id}
+                                        style={{ width: '30%', alignItems: 'center', marginBottom: 20, opacity: badge.earned ? 1 : 0.5 }}
+                                        onPress={() => handleSelectBadge(badge)}
+                                        disabled={!badge.earned}
+                                    >
+                                        <View style={{
+                                            width: 60, height: 60, borderRadius: 30,
+                                            backgroundColor: badge.earned ? badge.color + '20' : '#eee',
+                                            justifyContent: 'center', alignItems: 'center', marginBottom: 5,
+                                            borderWidth: user?.featuredBadgeId === badge.id ? 2 : 0,
+                                            borderColor: badge.color
+                                        }}>
+                                            <FontAwesome5 name={badge.icon} size={24} color={badge.earned ? badge.color : '#ccc'} />
+                                        </View>
+                                        <Text style={{ fontSize: 10, textAlign: 'center', fontWeight: 'bold' }}>{badge.name}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        </ScrollView>
+
+                        <TouchableOpacity
+                            style={{ alignSelf: 'center', marginTop: 10, padding: 10 }}
+                            onPress={() => {
+                                setIsBadgePickerVisible(false);
+                                router.push('/badges');
+                            }}
+                        >
+                            <Text style={{ color: themeColors.primary, fontWeight: 'bold' }}>Ver Progresso Detalhado</Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
             </Modal>

@@ -374,7 +374,19 @@ export default function GameDetailsScreen() {
                     <Text style={styles.sectionTitle}>Jogadores ({players.length})</Text>
                     {players.length > 0 ? (
                         players.map((player, index) => (
-                            <View key={`player-${player.user_id || index}`} style={styles.playerRow}>
+                            <TouchableOpacity
+                                key={`player-${player.user_id || index}`}
+                                style={styles.playerRow}
+                                onPress={() => {
+                                    console.log('Navigating to profile:', player.user_id);
+                                    if (player.user_id) {
+                                        router.push(`/player/${player.user_id}`);
+                                    } else {
+                                        console.error('User ID is missing for player:', player);
+                                        alert('Erro: Jogador sem ID.');
+                                    }
+                                }}
+                            >
                                 <Image
                                     source={{ uri: player.avatar_url || 'https://via.placeholder.com/150' }}
                                     style={styles.playerAvatar}
@@ -395,7 +407,7 @@ export default function GameDetailsScreen() {
                                     </View>
                                     <Text style={styles.playerUsername}>{player.username || '@jogador'}</Text>
                                 </View>
-                            </View>
+                            </TouchableOpacity>
                         ))
                     ) : (
                         <Text style={{ color: '#999', fontStyle: 'italic' }}>Ainda ninguém se inscreveu. Sê o primeiro!</Text>
