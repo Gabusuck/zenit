@@ -1,70 +1,104 @@
 
-import { FontAwesome5, Ionicons } from '@expo/vector-icons';
+import { FontAwesome5 } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { Stack, router, useFocusEffect } from 'expo-router';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, FlatList, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Switch, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { Text } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
-import { getSportByName } from '@/constants/Sports';
 import { useUser } from '@/context/UserContext';
 import { supabase } from '@/lib/supabase';
 
-export default function CreateGameScreen() {
+export default function EditGameScreen() {
+    const { id } = useLocalSearchParams();
     const colorScheme = useColorScheme();
     const themeColors = Colors[colorScheme ?? 'light'];
     const { user } = useUser();
 
     const [location, setLocation] = useState('');
-    const [selectedVenue, setSelectedVenue] = useState<any>(null);
-    const [venues, setVenues] = useState<any[]>([]);
-    const [showVenueModal, setShowVenueModal] = useState(false);
-    const [venueSearch, setVenueSearch] = useState('');
-    const [loadingVenues, setLoadingVenues] = useState(false);
-
     const [date, setDate] = useState(new Date());
     const [time, setTime] = useState(new Date());
     const [price, setPrice] = useState('');
     const [totalSlots, setTotalSlots] = useState('10');
+    const [filledSlots, setFilledSlots] = useState(0); // Track filled slots for validation
     const [description, setDescription] = useState('');
+    const [isPrivate, setIsPrivate] = useState(false);
+    const [password, setPassword] = useState('');
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [showTimePicker, setShowTimePicker] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [loading, setLoading] = useState(true);
 
-    useFocusEffect(
-        useCallback(() => {
-            fetchVenues();
-        }, [])
-    );
+    useEffect(() => {
+        fetchGameDetails();
+    }, [id]);
 
-    const fetchVenues = async () => {
-        setLoadingVenues(true);
+    const fetchGameDetails = async () => {
+        if (!id) return;
+
         try {
             const { data, error } = await supabase
-                .from('venues')
+                .from('games')
                 .select('*')
-                .order('name', { ascending: true });
+                .eq('id', id)
+                .single();
 
-            if (error) throw error;
-            setVenues(data || []);
+            if (error) {
+                console.error('Error fetching game details:', error);
+                alert('Erro ao carregar detalhes do jogo.');
+                router.back();
+            } else {
+                // Populate state
+                setLocation(data.location);
+                setPrice(data.price.toString());
+                setTotalSlots(data.total_slots.toString());
+                setFilledSlots(data.filled_slots);
+                setDescription(data.description || '');
+                setIsPrivate(data.is_private || false);
+                setPassword(data.password || '');
+
+                // Parse Date and Time
+                if (data.date) {
+                    const [day, month, year] = data.date.split('/').map(Number);
+                    setDate(new Date(year, month - 1, day));
+                }
+
+                if (data.time) {
+                    const [hours, minutes] = data.time.split(':').map(Number);
+                    const newTime = new Date();
+                    newTime.setHours(hours, minutes);
+                    setTime(newTime);
+                }
+            }
         } catch (error) {
-            console.error('Error fetching venues:', error);
+            console.error('Unexpected error:', error);
         } finally {
-            setLoadingVenues(false);
+            setLoading(false);
         }
     };
 
-    const handleCreateGame = async () => {
+    const handleUpdateGame = async () => {
         if (!location || !price || !totalSlots) {
             alert('Por favor, preencha todos os campos obrigatórios.');
             return;
         }
 
+        if (isPrivate && !password) {
+            alert('Jogos privados requerem uma palavra-passe.');
+            return;
+        }
+
         if (!user) {
-            alert('Precisa de estar logado para criar um jogo.');
+            alert('Precisa de estar logado.');
+            return;
+        }
+
+        const newTotalSlots = parseInt(totalSlots);
+        if (newTotalSlots < filledSlots) {
+            alert(`Não pode reduzir as vagas para menos de ${filledSlots} (jogadores inscritos).`);
             return;
         }
 
@@ -74,44 +108,25 @@ export default function CreateGameScreen() {
         const formattedTime = time.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
 
         try {
-            const { data, error } = await supabase
+            const { error } = await supabase
                 .from('games')
-                .insert({
-                    created_by: user.id,
+                .update({
                     location: location,
                     date: formattedDate,
                     time: formattedTime,
                     price: parseFloat(price.replace(',', '.')),
-                    total_slots: parseInt(totalSlots),
-                    filled_slots: 0, // Will be incremented by trigger when we add the player
-                    description: description
+                    total_slots: newTotalSlots,
+                    description: description,
+                    is_private: isPrivate,
+                    password: isPrivate ? password : null
                 })
-                .select()
-                .single();
+                .eq('id', id);
 
-            if (data) {
-                // Add creator as first participant
-                const { error: participantError } = await supabase
-                    .from('game_players')
-                    .insert({
-                        game_id: data.id,
-                        user_id: user.id,
-                        status: 'confirmed'
-                    });
-
-                if (participantError) {
-                    console.error('Error adding creator to game:', participantError);
-                    // Optional: revert game creation? or just alert
-                    alert('Jogo criado, mas erro ao adicionar participante.');
-                } else {
-                    alert('Jogo criado com sucesso! ⚽');
-                    router.back();
-                }
-            } else if (error) {
-                console.error('Error creating game:', error);
-                alert('Erro ao criar o jogo. Tente novamente.');
+            if (error) {
+                console.error('Error updating game:', error);
+                alert('Erro ao atualizar o jogo.');
             } else {
-                alert('Jogo criado com sucesso! ⚽');
+                alert('Jogo atualizado com sucesso! ⚽');
                 router.back();
             }
         } catch (e) {
@@ -160,11 +175,18 @@ export default function CreateGameScreen() {
         toggleTimePicker();
     };
 
+    if (loading) {
+        return (
+            <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <ActivityIndicator size="large" color={themeColors.primary} />
+            </View>
+        );
+    }
 
     return (
         <View style={[styles.container, { backgroundColor: '#f5f5f5' }]}>
             <Stack.Screen options={{
-                title: 'Criar Jogo',
+                title: 'Editar Jogo',
                 headerStyle: { backgroundColor: themeColors.primary },
                 headerTintColor: '#fff',
                 headerTitleStyle: { fontWeight: 'bold' },
@@ -185,16 +207,15 @@ export default function CreateGameScreen() {
                     {/* Location */}
                     <View style={styles.inputGroup}>
                         <Text style={styles.label}>Localização <Text style={{ color: 'red' }}>*</Text></Text>
-                        <TouchableOpacity
-                            style={styles.pickerButton}
-                            onPress={() => setShowVenueModal(true)}
-                        >
-                            <FontAwesome5 name="map-marker-alt" size={18} color={location ? themeColors.primary : "#666"} style={styles.icon} />
-                            <Text style={[styles.pickerText, !location && { color: '#999' }]}>
-                                {location || 'Selecionar Campo'}
-                            </Text>
-                            <FontAwesome5 name="chevron-down" size={14} color="#999" style={{ marginLeft: 'auto' }} />
-                        </TouchableOpacity>
+                        <View style={styles.inputContainer}>
+                            <FontAwesome5 name="map-marker-alt" size={18} color="#666" style={styles.icon} />
+                            <TextInput
+                                style={styles.input}
+                                placeholder="Ex: Campo de Pinheiro"
+                                value={location}
+                                onChangeText={setLocation}
+                            />
+                        </View>
                     </View>
 
                     {/* Date & Time Row */}
@@ -325,101 +346,54 @@ export default function CreateGameScreen() {
                         </View>
                     </View>
 
+                    {/* Private Game Toggle */}
+                    <View style={[styles.inputGroup, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 15 }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <FontAwesome5 name="lock" size={18} color="#666" style={{ marginRight: 10 }} />
+                            <Text style={styles.label}>Jogo Privado</Text>
+                        </View>
+                        <Switch
+                            value={isPrivate}
+                            onValueChange={setIsPrivate}
+                            trackColor={{ false: "#767577", true: themeColors.primary }}
+                            thumbColor={isPrivate ? "#fff" : "#f4f3f4"}
+                        />
+                    </View>
+
+                    {/* Password Input (Conditional) */}
+                    {isPrivate && (
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.label}>Palavra-passe <Text style={{ color: 'red' }}>*</Text></Text>
+                            <View style={styles.inputContainer}>
+                                <FontAwesome5 name="key" size={18} color="#666" style={styles.icon} />
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Defina uma palavra-passe"
+                                    value={password}
+                                    onChangeText={setPassword}
+                                    secureTextEntry
+                                />
+                            </View>
+                        </View>
+                    )}
+
                     <TouchableOpacity
                         style={[styles.submitButton, { backgroundColor: themeColors.primary, opacity: isSubmitting ? 0.7 : 1 }]}
-                        onPress={handleCreateGame}
+                        onPress={handleUpdateGame}
                         disabled={isSubmitting}
                     >
                         {isSubmitting ? (
                             <ActivityIndicator color="#fff" />
                         ) : (
                             <>
-                                <Ionicons name="football-outline" size={24} color="#fff" style={{ marginRight: 10 }} />
-                                <Text style={styles.submitButtonText}>Criar Jogo</Text>
+                                <FontAwesome5 name="save" size={24} color="#fff" style={{ marginRight: 10 }} />
+                                <Text style={styles.submitButtonText}>Guardar Alterações</Text>
                             </>
                         )}
                     </TouchableOpacity>
 
                 </ScrollView>
             </KeyboardAvoidingView>
-
-            {/* Venue Selection Modal */}
-            <Modal
-                visible={showVenueModal}
-                animationType="slide"
-                presentationStyle="pageSheet"
-                onRequestClose={() => setShowVenueModal(false)}
-            >
-                <View style={[styles.container, { paddingTop: 20 }]}>
-                    <View style={styles.modalHeader}>
-                        <Text style={styles.modalTitle}>Selecionar Campo</Text>
-                        <TouchableOpacity onPress={() => setShowVenueModal(false)}>
-                            <FontAwesome5 name="times" size={24} color="#333" />
-                        </TouchableOpacity>
-                    </View>
-
-                    <View style={{ padding: 15, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
-                        <TextInput
-                            style={styles.searchInput}
-                            placeholder="Pesquisar campo..."
-                            value={venueSearch}
-                            onChangeText={setVenueSearch}
-                        />
-                    </View>
-
-                    <TouchableOpacity
-                        style={styles.addVenueButton}
-                        onPress={() => {
-                            setShowVenueModal(false);
-                            router.push('/venue/create');
-                        }}
-                    >
-                        <View style={[styles.iconCircle, { backgroundColor: themeColors.primary }]}>
-                            <FontAwesome5 name="plus" size={14} color="#fff" />
-                        </View>
-                        <Text style={[styles.addVenueText, { color: themeColors.primary }]}>Adicionar Novo Campo</Text>
-                    </TouchableOpacity>
-
-                    {loadingVenues ? (
-                        <ActivityIndicator size="large" color={themeColors.primary} style={{ marginTop: 20 }} />
-                    ) : (
-                        <FlatList
-                            data={venues.filter(v =>
-                                v.name.toLowerCase().includes(venueSearch.toLowerCase()) ||
-                                (v.address && v.address.toLowerCase().includes(venueSearch.toLowerCase()))
-                            )}
-                            keyExtractor={item => item.id}
-                            renderItem={({ item }) => {
-                                const sport = getSportByName(item.sport);
-                                const iconColor = sport ? sport.color : '#666';
-
-                                return (
-                                    <TouchableOpacity
-                                        style={styles.venueItem}
-                                        onPress={() => {
-                                            setLocation(item.name);
-                                            setSelectedVenue(item);
-                                            setShowVenueModal(false);
-                                        }}
-                                    >
-                                        <FontAwesome5 name="map-marker-alt" size={16} color={iconColor} style={{ marginRight: 15 }} />
-                                        <View>
-                                            <Text style={styles.venueName}>{item.name}</Text>
-                                            {item.address && <Text style={styles.venueAddress}>{item.address}</Text>}
-                                        </View>
-                                    </TouchableOpacity>
-                                );
-                            }}
-                            ListEmptyComponent={
-                                <View style={{ padding: 20, alignItems: 'center' }}>
-                                    <Text style={{ color: '#999' }}>Nenhum campo encontrado.</Text>
-                                    <Text style={{ color: '#999', fontSize: 12 }}>Adiciona o teu campo favorito!</Text>
-                                </View>
-                            }
-                        />
-                    )}
-                </View>
-            </Modal>
         </View>
     );
 }
@@ -536,63 +510,4 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: 'bold',
     },
-    // Modal Styles
-    modalHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: 20,
-        borderBottomWidth: 1,
-        borderBottomColor: '#eee',
-    },
-    modalTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: '#333',
-    },
-    searchInput: {
-        backgroundColor: '#f5f5f5',
-        borderRadius: 10,
-        padding: 12,
-        fontSize: 16,
-        borderWidth: 1,
-        borderColor: '#ddd',
-    },
-    venueItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 15,
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-    },
-    venueName: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: '#333',
-        marginBottom: 2,
-    },
-    venueAddress: {
-        fontSize: 12,
-        color: '#888',
-    },
-    addVenueButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 15,
-        borderBottomWidth: 1,
-        borderBottomColor: '#eee',
-        backgroundColor: '#fafafa'
-    },
-    iconCircle: {
-        width: 24,
-        height: 24,
-        borderRadius: 12,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginRight: 15
-    },
-    addVenueText: {
-        fontWeight: 'bold',
-        fontSize: 16,
-    }
 });
