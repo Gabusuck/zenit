@@ -19,7 +19,7 @@ const supabaseAnonKey = 'sb_publishable_aWnDGeM-DfyLUID2400n9A_eDI3erDv';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
-        storage: AsyncStorage,
+        storage: AsyncStorage as any,
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: false,

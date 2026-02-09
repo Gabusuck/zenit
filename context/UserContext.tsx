@@ -15,6 +15,7 @@ type User = {
     rating: number;
     ratingCount: number;
     gamesPlayed: number;
+    gamesOrganized: number;
     attendance: string;
     punctuality: string;
     position: string;
@@ -22,6 +23,8 @@ type User = {
     age: string;
     birthYear?: string;
     featuredBadgeId?: string;
+    featuredBadgeIds?: string[];
+    createdAt?: string;
 };
 
 type UserContextType = {
@@ -33,6 +36,7 @@ type UserContextType = {
     logout: () => Promise<void>;
     updateAvatar: (uri: string) => Promise<void>;
     updateProfile: (data: Partial<User>) => Promise<void>;
+    refreshProfile: () => Promise<void>;
 };
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
@@ -58,6 +62,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setSession(session);
             if (session) {
                 fetchProfile(session.user.id, session.user.email!);
+                checkPastGames(session.user.id);
             } else {
                 setUser(null);
                 setIsLoading(false);
@@ -66,6 +71,57 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         return () => subscription.unsubscribe();
     }, []);
+
+    const checkPastGames = async (userId: string) => {
+        try {
+            // Find games where user is 'confirmed'
+            const { data: participations, error } = await supabase
+                .from('game_players')
+                .select('game_id, games(date, time)')
+                .eq('user_id', userId)
+                .eq('status', 'confirmed');
+
+            if (error || !participations) return;
+
+            const now = new Date();
+            const pastGameIds: string[] = [];
+
+            participations.forEach((p: any) => {
+                if (p.games?.date && p.games?.time) {
+                    try {
+                        const [day, month, year] = p.games.date.split('/').map(Number);
+                        const [hours, minutes] = p.games.time.split(':').map(Number);
+                        const gameDate = new Date(year, month - 1, day, hours, minutes);
+
+                        // Add buffer (e.g., game duration ~90 mins) or strict end time
+                        // Using strict start time for simplicity as requested "mal o jogo aconteca"
+                        if (gameDate < now) {
+                            pastGameIds.push(p.game_id);
+                        }
+                    } catch (e) {
+                        console.error("Date parse error", e);
+                    }
+                }
+            });
+
+            if (pastGameIds.length > 0) {
+                console.log("Auto-confirming past games:", pastGameIds.length);
+                const { error: updateError } = await supabase
+                    .from('game_players')
+                    .update({ status: 'attended' })
+                    .eq('user_id', userId)
+                    .in('game_id', pastGameIds);
+
+                if (!updateError) {
+                    // Refresh profile stats after update
+                    fetchProfile(userId, session?.user?.email!);
+                }
+            }
+
+        } catch (error) {
+            console.error("Error checking past games:", error);
+        }
+    };
 
     const fetchProfile = async (userId: string, email: string) => {
         try {
@@ -78,6 +134,23 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (error) {
                 console.error('Error fetching profile:', error);
             }
+
+            // 2. Fetch Games Organized Count
+            const { count: organizedCount, error: organizedError } = await supabase
+                .from('games')
+                .select('*', { count: 'exact', head: true })
+                .eq('created_by', userId);
+
+            if (organizedError) console.error('Error fetching organized count:', organizedError);
+
+            // 3. Fetch Games Played Count (Live)
+            const { count: playedCount, error: playedError } = await supabase
+                .from('game_players')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', userId)
+                .eq('status', 'attended');
+
+            if (playedError) console.error('Error fetching games played count:', playedError);
 
             if (data) {
                 // Calculate Punctuality/Attendance
@@ -106,6 +179,14 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     console.error('Error calculating attendance:', e);
                 }
 
+                // Handle Badge Ids (Array or Single)
+                let badgeIds: string[] = [];
+                if (data.featured_badge_ids && Array.isArray(data.featured_badge_ids)) {
+                    badgeIds = data.featured_badge_ids;
+                } else if (data.featured_badge_id) {
+                    badgeIds = [data.featured_badge_id];
+                }
+
                 setUser({
                     id: userId,
                     email: email,
@@ -116,7 +197,8 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     level: data.level || 1,
                     rating: data.rating || 0,
                     ratingCount: data.rating_count || 0,
-                    gamesPlayed: data.games_played || 0,
+                    gamesPlayed: playedCount || 0,
+                    gamesOrganized: organizedCount || 0,
                     attendance: attendanceValue,
                     punctuality: data.punctuality || '-',
                     position: data.position || '-',
@@ -124,6 +206,8 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     age: data.age || '-',
                     birthYear: data.birth_year,
                     featuredBadgeId: data.featured_badge_id,
+                    featuredBadgeIds: badgeIds,
+                    createdAt: data.created_at,
                 });
             }
         } catch (error) {
@@ -304,6 +388,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
             age: data.age,
             birth_year: data.birthYear,
             featured_badge_id: data.featuredBadgeId,
+            featured_badge_ids: data.featuredBadgeIds,
             updated_at: new Date(),
         };
 
@@ -318,8 +403,24 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
     }
 
+    const refreshProfile = async () => {
+        if (session?.user) {
+            await fetchProfile(session.user.id, session.user.email!);
+        }
+    };
+
     return (
-        <UserContext.Provider value={{ user, session, isLoading, login, register, logout, updateAvatar, updateProfile }}>
+        <UserContext.Provider value={{
+            user,
+            session,
+            isLoading,
+            login,
+            register,
+            logout,
+            updateAvatar,
+            updateProfile,
+            refreshProfile
+        }}>
             {children}
         </UserContext.Provider>
     );

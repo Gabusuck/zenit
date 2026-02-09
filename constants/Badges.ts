@@ -1,23 +1,56 @@
-export const BADGES = [
-    // Organizador Tiers
-    { id: '1', name: 'Organizador', description: 'Organizaste o teu 1º jogo.', icon: 'clipboard-list', color: '#4CAF50', earned: true, progress: 1, target: 1 },
-    { id: '2', name: 'Capitão', description: 'Organizaste 10 jogos.', icon: 'crown', color: '#2196F3', earned: false, progress: 1, target: 10 },
-    { id: '3', name: 'Lenda', description: 'Organizaste 50 jogos!', icon: 'dragon', color: '#9C27B0', earned: false, progress: 1, target: 50 },
-
-    // Participation Tiers
-    { id: '4', name: 'Estreante', description: 'Completaste o teu 1º jogo.', icon: 'baby', color: '#8BC34A', earned: true, progress: 1, target: 1 },
-    { id: '5', name: 'Habitué', description: 'Jogaste 10 jogos.', icon: 'running', color: '#FF9800', earned: false, progress: 1, target: 10 },
-    { id: '6', name: 'Viciado', description: 'Jogaste 50 jogos!', icon: 'fire-alt', color: '#F44336', earned: false, progress: 1, target: 50 },
-
-    // Reliability
-    { id: '7', name: 'Relógio Suíço', description: 'Sempre pontual nos últimos 10 jogos.', icon: 'clock', color: '#607D8B', earned: true, progress: 10, target: 10 },
-
-    // Social / Community
-    { id: '8', name: 'Amigável', description: 'Recebeste 5 avaliações positivas de fair-play.', icon: 'handshake', color: '#E91E63', earned: true, progress: 5, target: 5 },
-    { id: '9', name: 'Influencer', description: 'Convidaste 5 amigos para a app.', icon: 'share-alt', color: '#00BCD4', earned: false, progress: 0, target: 5 },
-
-    // Streaks
-    { id: '10', name: 'Maratonista', description: 'Jogaste 3 dias seguidos.', icon: 'bolt', color: '#FFC107', earned: false, progress: 0, target: 3 },
-    { id: '11', name: 'Guerreiro de Inverno', description: 'Jogaste num dia de chuva.', icon: 'cloud-rain', color: '#3F51B5', earned: false, progress: 0, target: 1 },
-    { id: '12', name: 'Noturno', description: 'Jogaste 5 jogos depois das 22h.', icon: 'moon', color: '#673AB7', earned: false, progress: 2, target: 5 },
+// Badge Definitions
+export const BADGE_DEFINITIONS = [
+    {
+        id: 'games_played',
+        category: 'Participation',
+        tiers: [
+            { level: 1, name: 'Estreante', description: 'Completaste o teu 1º jogo.', icon: 'baby', color: '#8BC34A', target: 1 },
+            { level: 2, name: 'Habitué', description: 'Jogaste 10 jogos.', icon: 'running', color: '#FF9800', target: 10 },
+            { level: 3, name: 'Viciado', description: 'Jogaste 50 jogos!', icon: 'fire-alt', color: '#F44336', target: 50 },
+            { level: 4, name: 'Lenda do Relvado', description: 'Jogaste 100 jogos!', icon: 'trophy', color: '#FFD700', target: 100 },
+        ]
+    },
+    {
+        id: 'games_organized',
+        category: 'Organization',
+        tiers: [
+            { level: 1, name: 'Organizador', description: 'Organizaste o teu 1º jogo.', icon: 'clipboard-list', color: '#4CAF50', target: 1 },
+            { level: 2, name: 'Capitão', description: 'Organizaste 10 jogos.', icon: 'crown', color: '#2196F3', target: 10 },
+            { level: 3, name: 'Presidente', description: 'Organizaste 50 jogos!', icon: 'dragon', color: '#9C27B0', target: 50 },
+        ]
+    },
+    {
+        id: 'attendance',
+        category: 'Reliability',
+        tiers: [
+            { level: 1, name: 'Comprometido', description: 'Mantiveste 100% de assiduidade em 5 jogos.', icon: 'check-circle', color: '#009688', target: 5 }, // Special logic needed
+        ]
+    },
+    {
+        id: 'streak',
+        category: 'Streak',
+        tiers: [
+            { level: 1, name: 'Aquecimento', description: 'Jogaste 2 semanas seguidas.', icon: 'burn', color: '#FF5722', target: 2 },
+            { level: 2, name: 'Maratonista', description: 'Jogaste 4 semanas seguidas!', icon: 'bolt', color: '#FFC107', target: 4 },
+        ]
+    },
+    {
+        id: 'loyalty',
+        category: 'Loyalty',
+        tiers: [
+            { level: 1, name: 'Membro', description: 'Conta criada há 1 mês.', icon: 'id-card', color: '#795548', target: 1 },
+            { level: 2, name: 'Veterano', description: 'Conta criada há 6 meses.', icon: 'medal', color: '#607D8B', target: 6 },
+            { level: 3, name: 'Fundador', description: 'Conta criada há 1 ano!', icon: 'chess-king', color: '#FFD700', target: 12 },
+        ]
+    },
+    {
+        id: 'profile_completion',
+        category: 'Identity',
+        tiers: [
+            { level: 1, name: 'Identidade', description: 'Perfil completo (Foto, Posição, Pé, Idade).', icon: 'fingerprint', color: '#9C27B0', target: 100 },
+        ]
+    }
 ];
+
+// Helper to get flat list for display if needed, but logic should handle tiers
+export const BADGES: any[] = []; // Deprecated, use definitions

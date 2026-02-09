@@ -1,31 +1,34 @@
 
 import { FontAwesome, FontAwesome5, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
-import React, { useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback, useState } from 'react';
 import { Alert, Image, Keyboard, Modal, ScrollView, StyleSheet, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import AttendanceModal from '@/components/AttendanceModal';
 import { Text } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
-import { BADGES } from '@/constants/Badges';
 import Colors from '@/constants/Colors';
 import { useUser } from '@/context/UserContext';
 import { supabase } from '@/lib/supabase';
+import { calculateUserBadges, UserBadgeState, UserStats } from '@/utils/badges';
 
 export default function ProfileScreen() {
     const colorScheme = useColorScheme();
     const themeColors = Colors[colorScheme ?? 'light'];
     const { user, updateAvatar, updateProfile, logout } = useUser();
 
-
-
     // UI State
     const [isEditingProfile, setIsEditingProfile] = useState(false); // For details (Position, Foot, etc)
     const [isEditingName, setIsEditingName] = useState(false);       // For Name/Username
     const [isBadgePickerVisible, setIsBadgePickerVisible] = useState(false); // For Badge Selection
     const [isAttendanceModalVisible, setIsAttendanceModalVisible] = useState(false);
+
+    // Badge State
+    const [userBadges, setUserBadges] = useState<UserBadgeState[]>([]);
+    const [selectedBadge, setSelectedBadge] = useState<UserBadgeState | null>(null);
+    const [gamesOrganizedCount, setGamesOrganizedCount] = useState(0);
 
     // Edit Form State - Profile Details
     const [position, setPosition] = useState('');
@@ -46,15 +49,17 @@ export default function ProfileScreen() {
     const [missedGamesCount, setMissedGamesCount] = useState(0);
     const [hasPenalty, setHasPenalty] = useState(false);
 
-    React.useEffect(() => {
-        if (user) {
-            fetchAttendanceStats();
-        }
-    }, [user]);
+    useFocusEffect(
+        useCallback(() => {
+            if (user) {
+                fetchStats();
+            }
+        }, [user])
+    );
 
-    const fetchAttendanceStats = async () => {
+    const fetchStats = async () => {
         try {
-            // Count total no_shows
+            // 1. Fetch Attendance (No Shows)
             const { count, error } = await supabase
                 .from('game_players')
                 .select('*', { count: 'exact', head: true })
@@ -65,20 +70,9 @@ export default function ProfileScreen() {
                 setMissedGamesCount(count || 0);
             }
 
-            // Check for penalty (no_show in last 7 days)
+            // 3. Check for penalty (no_show in last 7 days)
             const sevenDaysAgo = new Date();
             sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-            const { data: recentNoShows, error: penaltyError } = await supabase
-                .from('game_players')
-                .select('game_id, games(date)')
-                .eq('user_id', user!.id)
-                .eq('status', 'no_show')
-                .gt('created_at', sevenDaysAgo.toISOString()); // Assuming created_at roughly tracks when it happened, or better yet check game date?
-            // The prompt says "se o organizador colocar que a pessoa faltou ... durante 7 dias".
-            // Ideally we check if the GAME DATE was in the last 7 days.
-            // But joining logic is complex here.
-            // Let's rely on checking games where status is no_show, and join game date.
 
             const { data: penaltyData, error: penaltyDataError } = await supabase
                 .from('game_players')
@@ -94,15 +88,48 @@ export default function ProfileScreen() {
             if (!penaltyDataError && penaltyData) {
                 const hasRecent = penaltyData.some((p: any) => {
                     if (!p.games?.date) return false;
-                    const [day, month, year] = p.games.date.split('/').map(Number);
-                    const gameDate = new Date(year, month - 1, day);
-                    return gameDate >= sevenDaysAgo;
+                    try {
+                        // Check if p.games.date is in DD/MM/YYYY format or ISO
+                        // Assuming DD/MM/YYYY based on previous context
+                        const [day, month, year] = p.games.date.split('/').map(Number);
+                        const gameDate = new Date(year, month - 1, day);
+                        return gameDate >= sevenDaysAgo;
+                    } catch (e) {
+                        return false;
+                    }
                 });
                 setHasPenalty(hasRecent);
             }
 
+            // 4. Calculate Badges
+            // We use user.gamesPlayed from context (which comes from profiles table)
+            // If gamesPlayed is not updated in profiles, we might need to fetch it count(*).
+            // For now assuming user.gamesPlayed is accurate.
+            // Calculate Account Age
+            const createdAt = user?.createdAt ? new Date(user.createdAt) : new Date();
+            const now = new Date();
+            const monthsDiff = (now.getFullYear() - createdAt.getFullYear()) * 12 + (now.getMonth() - createdAt.getMonth());
+
+            // Calculate Profile Completion
+            let completionScore = 0;
+            if (user?.avatar) completionScore += 25;
+            if (user?.position && user.position !== '-') completionScore += 25;
+            if (user?.foot && user.foot !== '-') completionScore += 25;
+            if (user?.age && user.age !== '-') completionScore += 25;
+
+            const stats: UserStats = {
+                gamesPlayed: user?.gamesPlayed || 0,
+                gamesOrganized: user?.gamesOrganized || 0,
+                rating: user?.rating || 0,
+                ratingCount: user?.ratingCount || 0,
+                accountAgeInMonths: monthsDiff,
+                profileCompletion: completionScore
+            };
+            const calculatedBadges = calculateUserBadges(stats);
+            setUserBadges(calculatedBadges);
+
         } catch (e) {
-            console.error('Error fetching attendance stats:', e);
+            console.error('Error fetching stats:', e);
         }
     };
 
@@ -277,19 +304,20 @@ export default function ProfileScreen() {
 
                     <Text style={styles.username}>{user?.username || '@utilizador'}</Text>
 
-                    <View style={styles.ratingContainer}>
-                        <View style={{ flexDirection: 'row', marginRight: 5 }}>
-                            {[1, 2, 3, 4, 5].map((star) => (
-                                <FontAwesome
-                                    key={star}
-                                    name="star"
-                                    size={16}
-                                    color={star <= (user?.rating || 0) ? "#FFD700" : "#E0E0E0"}
-                                    style={{ marginHorizontal: 1 }}
-                                />
-                            ))}
-                        </View>
-                        <Text style={styles.ratingCount}>({user?.ratingCount || 0} avaliações)</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 5 }}>
+                        {(user?.featuredBadgeIds && user.featuredBadgeIds.length > 0
+                            ? user.featuredBadgeIds
+                            : (user?.featuredBadgeId ? [user.featuredBadgeId] : [])
+                        ).map((badgeId) => {
+                            const pinnedBadge = userBadges.find(b => b.definitionId === badgeId);
+                            if (!pinnedBadge) return null;
+                            return (
+                                <View key={badgeId} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: pinnedBadge.color + '15', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 15, marginHorizontal: 3, marginBottom: 3 }}>
+                                    <FontAwesome5 name={pinnedBadge.icon} size={12} color={pinnedBadge.color} style={{ marginRight: 6 }} />
+                                    <Text style={{ fontSize: 12, fontWeight: 'bold', color: pinnedBadge.color }}>{pinnedBadge.name}</Text>
+                                </View>
+                            );
+                        })}
                     </View>
                 </View>
 
@@ -307,30 +335,10 @@ export default function ProfileScreen() {
 
                     <TouchableOpacity style={styles.statItem} onPress={() => setIsBadgePickerVisible(true)}>
                         <View style={[styles.iconCircle, { backgroundColor: '#fff8e1' }]}>
-                            {user?.featuredBadgeId ? (
-                                (() => {
-                                    const badge = BADGES.find(b => b.id === user.featuredBadgeId);
-                                    return badge ? (
-                                        <FontAwesome5 name={badge.icon} size={20} color={badge.color} />
-                                    ) : (
-                                        <FontAwesome5 name="trophy" size={20} color="#FFC107" />
-                                    );
-                                })()
-                            ) : (
-                                <FontAwesome5 name="trophy" size={20} color="#FFC107" />
-                            )}
-
+                            <FontAwesome5 name="trophy" size={20} color="#FFC107" />
                         </View>
-                        {user?.featuredBadgeId ? (
-                            <Text style={{ fontSize: 12, color: '#666', textAlign: 'center', marginTop: 2 }}>
-                                {BADGES?.find(b => b.id === user.featuredBadgeId)?.name || 'Conquistas'}
-                            </Text>
-                        ) : (
-                            <Text style={styles.statValue}>Conquistas</Text>
-                        )}
-                        {!user?.featuredBadgeId && (
-                            <Text style={styles.statLabel}>Ver todas</Text>
-                        )}
+                        <Text style={styles.statValue}>{userBadges.filter(b => b.earned).length}</Text>
+                        <Text style={styles.statLabel}>Conquistas</Text>
                     </TouchableOpacity>
 
                     <View style={styles.statDivider} />
@@ -634,59 +642,170 @@ export default function ProfileScreen() {
             </Modal>
             {/* --- BADGE PICKER MODAL --- */}
             <Modal
-                animationType="slide"
+                animationType="fade"
                 transparent={true}
                 visible={isBadgePickerVisible}
-                onRequestClose={() => setIsBadgePickerVisible(false)}
+                onRequestClose={() => {
+                    setIsBadgePickerVisible(false);
+                    setSelectedBadge(null);
+                }}
             >
-                <View style={styles.modalOverlay}>
-                    <View style={[styles.modalContent, { maxHeight: '80%' }]}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
-                            <Text style={styles.modalTitle}>Escolher Medalha</Text>
-                            <TouchableOpacity onPress={() => setIsBadgePickerVisible(false)}>
-                                <FontAwesome5 name="times" size={20} color="#999" />
-                            </TouchableOpacity>
-                        </View>
+                <TouchableWithoutFeedback onPress={() => {
+                    setIsBadgePickerVisible(false);
+                    setSelectedBadge(null);
+                }}>
+                    <View style={[styles.modalOverlay, { justifyContent: 'center' }]}>
+                        <TouchableWithoutFeedback>
+                            <View style={[styles.modalContent, {
+                                width: '90%',
+                                height: '50%',
+                                borderRadius: 20,
+                                padding: 20,
+                                shadowColor: '#000',
+                                shadowOffset: { width: 0, height: 2 },
+                                shadowOpacity: 0.25,
+                                shadowRadius: 10,
+                                elevation: 10
+                            }]}>
+                                <TouchableOpacity
+                                    style={styles.closeButton}
+                                    onPress={() => {
+                                        setIsBadgePickerVisible(false);
+                                        setSelectedBadge(null);
+                                    }}
+                                >
+                                    <Ionicons name="close" size={24} color="#999" />
+                                </TouchableOpacity>
 
-                        <Text style={{ textAlign: 'center', color: '#666', marginBottom: 20 }}>
-                            Escolhe uma medalha para exibir no teu perfil.
-                        </Text>
+                                {selectedBadge ? (
+                                    <View style={{ alignItems: 'center', width: '100%' }}>
+                                        <TouchableOpacity
+                                            style={{ position: 'absolute', left: 0, top: 0, padding: 10, zIndex: 20 }}
+                                            onPress={() => setSelectedBadge(null)}
+                                        >
+                                            <Ionicons name="arrow-back" size={24} color="#333" />
+                                        </TouchableOpacity>
 
-                        <ScrollView>
-                            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
-                                {BADGES.map((badge) => (
-                                    <TouchableOpacity
-                                        key={badge.id}
-                                        style={{ width: '30%', alignItems: 'center', marginBottom: 20, opacity: badge.earned ? 1 : 0.5 }}
-                                        onPress={() => handleSelectBadge(badge)}
-                                        disabled={!badge.earned}
-                                    >
-                                        <View style={{
-                                            width: 60, height: 60, borderRadius: 30,
-                                            backgroundColor: badge.earned ? badge.color + '20' : '#eee',
-                                            justifyContent: 'center', alignItems: 'center', marginBottom: 5,
-                                            borderWidth: user?.featuredBadgeId === badge.id ? 2 : 0,
-                                            borderColor: badge.color
-                                        }}>
-                                            <FontAwesome5 name={badge.icon} size={24} color={badge.earned ? badge.color : '#ccc'} />
+                                        <View style={[styles.iconCircle, { backgroundColor: selectedBadge.color + '20', width: 80, height: 80, borderRadius: 40, marginBottom: 15, marginTop: 10 }]}>
+                                            <FontAwesome5 name={selectedBadge.icon} size={40} color={selectedBadge.color} />
                                         </View>
-                                        <Text style={{ fontSize: 10, textAlign: 'center', fontWeight: 'bold' }}>{badge.name}</Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
-                        </ScrollView>
+                                        <Text style={styles.modalTitle}>{selectedBadge.name}</Text>
+                                        <Text style={styles.modalDescription}>{selectedBadge.description}</Text>
 
-                        <TouchableOpacity
-                            style={{ alignSelf: 'center', marginTop: 10, padding: 10 }}
-                            onPress={() => {
-                                setIsBadgePickerVisible(false);
-                                router.push('/badges');
-                            }}
-                        >
-                            <Text style={{ color: themeColors.primary, fontWeight: 'bold' }}>Ver Progresso Detalhado</Text>
-                        </TouchableOpacity>
+                                        <View style={{ marginTop: 20, width: '100%' }}>
+                                            <Text style={{ textAlign: 'center', marginBottom: 5, color: '#666' }}>
+                                                {selectedBadge.progress} / {selectedBadge.target}
+                                            </Text>
+                                            <View style={styles.progressBarBg}>
+                                                <View
+                                                    style={[
+                                                        styles.progressBarFill,
+                                                        {
+                                                            width: `${Math.min(100, (selectedBadge.progress / selectedBadge.target) * 100)}%`,
+                                                            backgroundColor: selectedBadge.earned ? selectedBadge.color : '#bdbdbd'
+                                                        }
+                                                    ]}
+                                                />
+                                            </View>
+
+                                            {selectedBadge.nextTier && selectedBadge.earned && (
+                                                <View style={{ marginTop: 15, alignItems: 'center', opacity: 0.7 }}>
+                                                    <Text style={{ fontSize: 12, color: '#999', marginBottom: 5 }}>Próximo Nível:</Text>
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                        <FontAwesome5
+                                                            name={selectedBadge.nextTierIcon || 'question'}
+                                                            size={14}
+                                                            color={selectedBadge.nextTierColor || '#999'}
+                                                            style={{ marginRight: 6 }}
+                                                        />
+                                                        <Text style={{ fontSize: 12, color: '#666', fontWeight: 'bold' }}>
+                                                            {selectedBadge.nextTierName}
+                                                        </Text>
+                                                    </View>
+                                                </View>
+                                            )}
+                                            <Text style={{ textAlign: 'center', marginTop: 5, fontSize: 12, color: '#999' }}>
+                                                {selectedBadge.earned
+                                                    ? (selectedBadge.nextTier ? `Próximo nível: ${selectedBadge.nextTier}` : 'Nível máximo!')
+                                                    : 'Bloqueado'}
+                                            </Text>
+                                        </View>
+
+                                        {selectedBadge.earned && (
+                                            <TouchableOpacity
+                                                style={{
+                                                    marginTop: 20,
+                                                    backgroundColor: (user?.featuredBadgeIds?.includes(selectedBadge.definitionId) || user?.featuredBadgeId === selectedBadge.definitionId) ? '#ccc' : themeColors.primary,
+                                                    paddingVertical: 10,
+                                                    paddingHorizontal: 20,
+                                                    borderRadius: 20,
+                                                    flexDirection: 'row',
+                                                    alignItems: 'center'
+                                                }}
+                                                onPress={() => {
+                                                    const currentIds = user?.featuredBadgeIds || (user?.featuredBadgeId ? [user.featuredBadgeId] : []);
+                                                    const isPinned = currentIds.includes(selectedBadge.definitionId);
+
+                                                    if (isPinned) {
+                                                        // Unpin
+                                                        const newIds = currentIds.filter(id => id !== selectedBadge.definitionId);
+                                                        updateProfile({ featuredBadgeIds: newIds, featuredBadgeId: newIds[0] || undefined }); // Keep sync
+                                                        Alert.alert("Sucesso", "Medalha removida do destaque.");
+                                                    } else {
+                                                        // Pin
+                                                        if (currentIds.length >= 3) {
+                                                            Alert.alert("Limite Atingido", "Podes afixar no máximo 3 medalhas.");
+                                                        } else {
+                                                            const newIds = [...currentIds, selectedBadge.definitionId];
+                                                            updateProfile({ featuredBadgeIds: newIds, featuredBadgeId: newIds[0] }); // Keep sync
+                                                            Alert.alert("Sucesso", `Medalha "${selectedBadge.name}" fixada!`);
+                                                        }
+                                                    }
+                                                    setIsBadgePickerVisible(false);
+                                                    setSelectedBadge(null);
+                                                }}
+                                            >
+                                                <FontAwesome5 name="thumbtack" size={14} color="#fff" style={{ marginRight: 8 }} />
+                                                <Text style={{ color: '#fff', fontWeight: 'bold' }}>
+                                                    {(user?.featuredBadgeIds?.includes(selectedBadge.definitionId) || user?.featuredBadgeId === selectedBadge.definitionId) ? 'Remover Destaque' : 'Fixar no Perfil'}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        )}
+                                    </View>
+                                ) : (
+                                    <View style={{ width: '100%', flex: 1 }}>
+                                        <Text style={styles.modalTitle}>As Tuas Conquistas</Text>
+                                        <ScrollView contentContainerStyle={{ paddingVertical: 10, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                            {userBadges.map((badge) => (
+                                                <TouchableOpacity
+                                                    key={badge.definitionId}
+                                                    style={{ margin: 10, alignItems: 'center' }}
+                                                    onPress={() => setSelectedBadge(badge)}
+                                                >
+                                                    <View style={[styles.badgeIcon, { width: 60, height: 60, borderRadius: 30, backgroundColor: badge.earned ? badge.color + '20' : '#e0e0e0', justifyContent: 'center', alignItems: 'center' }]}>
+                                                        <FontAwesome5
+                                                            name={badge.icon}
+                                                            size={24}
+                                                            color={badge.earned ? badge.color : '#bdbdbd'}
+                                                        />
+                                                        {((user?.featuredBadgeIds || []).includes(badge.definitionId) || user?.featuredBadgeId === badge.definitionId) && (
+                                                            <View style={{ position: 'absolute', top: 0, right: 0, backgroundColor: '#fff', borderRadius: 8, padding: 4, elevation: 2 }}>
+                                                                <FontAwesome5 name="thumbtack" size={12} color={themeColors.primary} />
+                                                            </View>
+                                                        )}
+                                                    </View>
+                                                    <Text style={{ fontSize: 10, marginTop: 4, color: badge.earned ? '#333' : '#999', width: 70, textAlign: 'center' }} numberOfLines={1}>
+                                                        {badge.name}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </ScrollView>
+                                    </View>
+                                )}
+                            </View>
+                        </TouchableWithoutFeedback>
                     </View>
-                </View>
+                </TouchableWithoutFeedback>
             </Modal>
         </SafeAreaView>
     );
@@ -1055,5 +1174,45 @@ const styles = StyleSheet.create({
         height: 1,
         backgroundColor: '#f0f0f0',
         marginLeft: 47, // Align with text (32 icon + 15 margin)
+    },
+    // Badge Modal Styles
+    closeButton: {
+        position: 'absolute',
+        top: 10,
+        right: 10,
+        padding: 5,
+        zIndex: 10,
+    },
+    modalDescription: {
+        fontSize: 16,
+        color: '#666',
+        textAlign: 'center',
+        lineHeight: 22,
+        marginBottom: 10,
+    },
+    progressBarBg: {
+        height: 6,
+        backgroundColor: '#f0f0f0',
+        borderRadius: 3,
+        marginBottom: 5,
+        overflow: 'hidden',
+    },
+    progressBarFill: {
+        height: '100%',
+        borderRadius: 3,
+    },
+    badgeRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 20,
+        backgroundColor: '#fff',
+        padding: 5,
+    },
+    badgeIcon: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });

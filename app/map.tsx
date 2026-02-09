@@ -11,6 +11,15 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import MapView, { Callout, Marker } from 'react-native-maps';
 
+export interface Venue {
+    id: string;
+    name: string;
+    address: string;
+    latitude: number;
+    longitude: number;
+    sport: string;
+}
+
 export default function MapScreen() {
     const colorScheme = useColorScheme();
     const themeColors = Colors[colorScheme ?? 'light'];
@@ -24,7 +33,7 @@ export default function MapScreen() {
         longitudeDelta: 0.0421,
     });
 
-    const [venues, setVenues] = useState<any[]>([]);
+    const [venues, setVenues] = useState<Venue[]>([]);
     const [loading, setLoading] = useState(true);
     const [permissionGranted, setPermissionGranted] = useState(false);
 
@@ -61,13 +70,22 @@ export default function MapScreen() {
             if (error) {
                 console.error('Error fetching venues:', error);
             } else {
-                setVenues(data || []);
+                const formattedVenues: Venue[] = (data || []).map((v: any) => ({
+                    ...v,
+                    latitude: Number(v.latitude),
+                    longitude: Number(v.longitude),
+                }));
+                setVenues(formattedVenues);
             }
         } catch (error) {
             console.error('Unexpected error:', error);
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleCalloutPress = (venueId: string) => {
+        router.push(`/venue/${venueId}` as any);
     };
 
     return (
@@ -100,12 +118,11 @@ export default function MapScreen() {
                             <Marker
                                 key={venue.id}
                                 coordinate={{
-                                    latitude: venue.latitude,
-                                    longitude: venue.longitude,
+                                    latitude: Number(venue.latitude),
+                                    longitude: Number(venue.longitude),
                                 }}
-                                title={venue.name}
-                                description={venue.address}
                                 pinColor={pinColor}
+                                onCalloutPress={() => handleCalloutPress(venue.id)}
                             >
                                 <Callout tooltip>
                                     <View style={styles.calloutContainer}>

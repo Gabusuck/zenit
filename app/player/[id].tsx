@@ -1,14 +1,14 @@
 import { FontAwesome, FontAwesome5, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { Stack, router, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Modal, ScrollView, StyleSheet, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 
 import AttendanceModal from '@/components/AttendanceModal';
 import { Text } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
-import { BADGES } from '@/constants/Badges';
 import Colors from '@/constants/Colors';
 import { supabase } from '@/lib/supabase';
+import { calculateUserBadges, UserStats } from '@/utils/badges';
 
 export default function PublicProfileScreen() {
     const { id } = useLocalSearchParams();
@@ -22,9 +22,11 @@ export default function PublicProfileScreen() {
 
 
     // ... inside component ...
+    const [userBadges, setUserBadges] = useState<any[]>([]);
     const [selectedBadge, setSelectedBadge] = useState<any>(null);
     const [isBadgeModalVisible, setIsBadgeModalVisible] = useState(false);
     const [isAttendanceModalVisible, setIsAttendanceModalVisible] = useState(false);
+    const [games, setGames] = useState<any[]>([]);
 
     // ... inside render ...
 
@@ -33,62 +35,101 @@ export default function PublicProfileScreen() {
         if (id) {
             fetchProfile();
             fetchPenaltyStats();
+            fetchGames();
         }
     }, [id]);
 
     const fetchProfile = async () => {
         console.log('Fetching profile for ID:', id);
         if (!id) {
-            console.error('No ID provided to fetchProfile');
             setError('ID do utilizador não fornecido.');
             setLoading(false);
             return;
         }
 
         try {
-            const { data, error } = await supabase
+            // 1. Fetch Profile
+            const { data: profileData, error } = await supabase
                 .from('profiles')
                 .select('*')
                 .eq('id', id)
                 .single();
 
-            if (error) {
-                console.error('Error fetching public profile:', error);
-                setError('Erro ao carregar perfil: ' + error.message);
-            } else {
-                console.log('Profile fetched successfully:', data);
+            if (error) throw error;
 
-                // Calculate Attendance (Assiduidade)
-                let attendanceValue = data.attendance || '-';
-                try {
-                    console.log('Calculating attendance for user:', id);
-                    const { data: attendanceData, error: attendanceError } = await supabase
-                        .from('game_players')
-                        .select('status')
-                        .eq('user_id', id)
-                        .in('status', ['attended', 'no_show']);
+            console.log('Profile fetched successfully:', profileData);
 
-                    console.log('Attendance Data:', attendanceData);
-                    console.log('Attendance Error:', attendanceError);
+            // 2. Fetch Games Organized Count
+            const { count: organizedCount, error: organizedError } = await supabase
+                .from('games')
+                .select('*', { count: 'exact', head: true })
+                .eq('created_by', id);
 
-                    if (!attendanceError && attendanceData && attendanceData.length > 0) {
-                        const total = attendanceData.length;
-                        const attended = attendanceData.filter((p: any) => p.status === 'attended').length;
-                        const percentage = Math.round((attended / total) * 100);
-                        console.log(`Calc: ${attended}/${total} = ${percentage}%`);
-                        attendanceValue = `${percentage}%`;
-                    } else {
-                        attendanceValue = '100%';
-                    }
-                } catch (e) {
-                    console.error('Error calculating public attendance:', e);
+            if (organizedError) console.error('Error fetching organized count:', organizedError);
+
+            // 2.5 Fetch Games Played (Attended)
+            const { count: playedCount, error: playedError } = await supabase
+                .from('game_players')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', id)
+                .eq('status', 'attended');
+
+            if (playedError) console.error('Error fetching played count:', playedError);
+
+            // 3. Calculate Attendance
+            let attendanceValue = profileData.attendance || '-';
+            // ... (rest of logic)
+
+            // Calculate Badges
+            // Calculate Account Age
+            const createdAt = profileData.created_at ? new Date(profileData.created_at) : new Date();
+            const now = new Date();
+            const monthsDiff = (now.getFullYear() - createdAt.getFullYear()) * 12 + (now.getMonth() - createdAt.getMonth());
+
+            // Calculate Profile Completion
+            let completionScore = 0;
+            if (profileData.avatar_url) completionScore += 25;
+            if (profileData.position) completionScore += 25;
+            if (profileData.foot) completionScore += 25;
+            if (profileData.age) completionScore += 25;
+
+            const stats: UserStats = {
+                gamesPlayed: playedCount || 0,
+                gamesOrganized: organizedCount || 0,
+                rating: profileData.rating || 0,
+                ratingCount: profileData.rating_count || 0,
+                accountAgeInMonths: monthsDiff,
+                profileCompletion: completionScore
+            };
+
+            const badges = calculateUserBadges(stats);
+            setUserBadges(badges);
+
+            // Existing Attendance Code (Simplified preserve)
+            try {
+                const { data: attendanceData, error: attendanceError } = await supabase
+                    .from('game_players')
+                    .select('status')
+                    .eq('user_id', id)
+                    .in('status', ['attended', 'no_show']);
+
+                if (!attendanceError && attendanceData && attendanceData.length > 0) {
+                    const total = attendanceData.length;
+                    const attended = attendanceData.filter((p: any) => p.status === 'attended').length;
+                    const percentage = Math.round((attended / total) * 100);
+                    attendanceValue = `${percentage}%`;
+                } else {
+                    attendanceValue = '100%';
                 }
-
-                setProfile({ ...data, attendance: attendanceValue });
+            } catch (e) {
+                console.error('Error calculating public attendance:', e);
             }
+
+            setProfile({ ...profileData, attendance: attendanceValue });
+
         } catch (e) {
             console.error('Unexpected error:', e);
-            setError('Erro inesperado: ' + JSON.stringify(e));
+            setError('Erro ao carregar perfil.');
         } finally {
             setLoading(false);
         }
@@ -99,10 +140,6 @@ export default function PublicProfileScreen() {
             // Check for penalty (no_show in last 7 days)
             const sevenDaysAgo = new Date();
             sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-            // We need to fetch games where this user was a player with status="no_show"
-            // and check the GAME DATE, or simply rely on created_at of the record for simplicity if easier
-            // but the accurate way is via the game date.
 
             const { data: penaltyData, error: penaltyDataError } = await supabase
                 .from('game_players')
@@ -118,14 +155,67 @@ export default function PublicProfileScreen() {
             if (!penaltyDataError && penaltyData) {
                 const hasRecent = penaltyData.some((p: any) => {
                     if (!p.games?.date) return false;
-                    const [day, month, year] = p.games.date.split('/').map(Number);
-                    const gameDate = new Date(year, month - 1, day);
-                    return gameDate >= sevenDaysAgo;
+                    try {
+                        const [day, month, year] = p.games.date.split('/').map(Number);
+                        const gameDate = new Date(year, month - 1, day);
+                        return gameDate >= sevenDaysAgo;
+                    } catch (e) {
+                        return false;
+                    }
                 });
                 setHasPenalty(hasRecent);
             }
         } catch (e) {
             console.error('Error fetching penalty stats:', e);
+        }
+    };
+
+    const fetchGames = async () => {
+        try {
+            const { data: playerGames, error: playerError } = await supabase
+                .from('game_players')
+                .select('game_id, status')
+                .eq('user_id', id);
+
+            if (playerError) throw playerError;
+
+            const gameIds = playerGames.map((pg: any) => pg.game_id);
+            const statusMap = playerGames.reduce((acc: any, pg: any) => {
+                acc[pg.game_id] = pg.status;
+                return acc;
+            }, {});
+
+            if (gameIds.length === 0) {
+                setGames([]);
+                return;
+            }
+
+            const { data: gamesData, error: gamesError } = await supabase
+                .from('games')
+                .select('*')
+                .in('id', gameIds)
+                .order('date', { ascending: false });
+
+            if (gamesError) throw gamesError;
+
+            const now = new Date();
+            const historyGames = gamesData.map((g: any) => ({
+                ...g,
+                user_status: statusMap[g.id]
+            })).filter((g: any) => {
+                try {
+                    const [day, month, year] = g.date.split('/').map(Number);
+                    const [hours, minutes] = g.time.split(':').map(Number);
+                    const gameDate = new Date(year, month - 1, day, hours, minutes);
+                    return g.status === 'finished' || g.status === 'canceled' || gameDate < now;
+                } catch (e) {
+                    return false;
+                }
+            });
+
+            setGames(historyGames || []);
+        } catch (e) {
+            console.error('Error fetching games:', e);
         }
     };
 
@@ -204,19 +294,20 @@ export default function PublicProfileScreen() {
 
                     <Text style={styles.username}>{profile.username || '@utilizador'}</Text>
 
-                    <View style={styles.ratingContainer}>
-                        <View style={{ flexDirection: 'row', marginRight: 5 }}>
-                            {[1, 2, 3, 4, 5].map((star) => (
-                                <FontAwesome
-                                    key={star}
-                                    name="star"
-                                    size={16}
-                                    color={star <= (profile.rating || 0) ? "#FFD700" : "#E0E0E0"}
-                                    style={{ marginHorizontal: 1 }}
-                                />
-                            ))}
-                        </View>
-                        <Text style={styles.ratingCount}>({profile.rating_count || 0} avaliações)</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginTop: 5 }}>
+                        {(profile.featured_badge_ids && Array.isArray(profile.featured_badge_ids) && profile.featured_badge_ids.length > 0
+                            ? profile.featured_badge_ids
+                            : (profile.featured_badge_id ? [profile.featured_badge_id] : [])
+                        ).map((badgeId: string) => {
+                            const pinnedBadge = userBadges.find(b => b.definitionId === badgeId);
+                            if (!pinnedBadge) return null;
+                            return (
+                                <View key={badgeId} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: pinnedBadge.color + '15', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 15, marginHorizontal: 3, marginBottom: 3 }}>
+                                    <FontAwesome5 name={pinnedBadge.icon} size={12} color={pinnedBadge.color} style={{ marginRight: 6 }} />
+                                    <Text style={{ fontSize: 12, fontWeight: 'bold', color: pinnedBadge.color }}>{pinnedBadge.name}</Text>
+                                </View>
+                            );
+                        })}
                     </View>
                 </View>
 
@@ -235,42 +326,14 @@ export default function PublicProfileScreen() {
                     <View style={styles.statDivider} />
                     <TouchableOpacity
                         style={styles.statItem}
-                        onPress={() => {
-                            if (profile.featured_badge_id) {
-                                const badge = BADGES?.find(b => b.id === profile.featured_badge_id);
-                                if (badge) {
-                                    setSelectedBadge(badge);
-                                    setIsBadgeModalVisible(true);
-                                }
-                            }
-                        }}
-                        activeOpacity={profile.featured_badge_id ? 0.7 : 1}
+                        onPress={() => setIsBadgeModalVisible(true)}
                     >
                         <View style={[styles.iconCircle, { backgroundColor: '#fff8e1' }]}>
-                            {profile.featured_badge_id ? (
-                                (() => {
-                                    const badge = BADGES?.find(b => b.id === profile.featured_badge_id);
-                                    return badge ? (
-                                        <FontAwesome5 name={badge.icon} size={20} color={badge.color} />
-                                    ) : (
-                                        <FontAwesome5 name="trophy" size={20} color="#FFC107" />
-                                    );
-                                })()
-                            ) : (
-                                <FontAwesome5 name="trophy" size={20} color="#FFC107" />
-                            )}
+                            <FontAwesome5 name="trophy" size={20} color="#FFC107" />
                         </View>
-                        {profile.featured_badge_id ? (
-                            <Text style={{ fontSize: 12, color: '#666', textAlign: 'center', marginTop: 2 }}>
-                                {BADGES?.find(b => b.id === profile.featured_badge_id)?.name || '-'}
-                            </Text>
-                        ) : (
-                            <Text style={styles.statValue}>{profile.badges_count || '-'}</Text>
-                        )}
-                        {!profile.featured_badge_id && <Text style={styles.statLabel}>Conquistas</Text>}
+                        <Text style={styles.statValue}>{userBadges.filter((b: any) => b.earned).length}</Text>
+                        <Text style={styles.statLabel}>Conquistas</Text>
                     </TouchableOpacity>
-
-                    <View style={styles.statDivider} />
 
                     <View style={styles.statDivider} />
 
@@ -285,6 +348,8 @@ export default function PublicProfileScreen() {
                         <Text style={styles.statLabel}>Assiduidade</Text>
                     </TouchableOpacity>
                 </View>
+
+                <View style={{ height: 20 }} />
 
                 {/* Player Details */}
                 <View style={styles.sectionContainer}>
@@ -333,10 +398,37 @@ export default function PublicProfileScreen() {
                     </View>
                 </View>
 
+                {/* Games List */}
+                <View style={[styles.sectionContainer, { marginTop: 20 }]}>
+                    <View style={styles.sectionHeaderRow}>
+                        <Text style={styles.sectionTitle}>Jogos Realizados ({games.length})</Text>
+                    </View>
+
+                    {games.length > 0 ? (
+                        games.map((game) => (
+                            <TouchableOpacity
+                                key={game.id}
+                                style={styles.gameCard}
+                                onPress={() => router.push(`/game/${game.id}`)}
+                            >
+                                <View style={styles.gameCardHeader}>
+                                    <Text style={styles.gameCardTitle}>{game.location}</Text>
+                                    <Text style={styles.gameCardDate}>{game.date} - {game.time?.slice(0, 5)}</Text>
+                                </View>
+                                {/* <Text style={styles.gameCardStatus}>Concluído</Text> */}
+                            </TouchableOpacity>
+                        ))
+                    ) : (
+                        <Text style={{ fontStyle: 'italic', color: '#999', textAlign: 'center', padding: 10 }}>
+                            Ainda não realizou jogos.
+                        </Text>
+                    )}
+                </View>
+
                 {/* Extra space */}
                 <View style={{ height: 50 }} />
 
-            </ScrollView>
+            </ScrollView >
 
 
             <AttendanceModal
@@ -362,15 +454,67 @@ export default function PublicProfileScreen() {
                                 >
                                     <Ionicons name="close" size={24} color="#999" />
                                 </TouchableOpacity>
-                                {selectedBadge && (
-                                    <View style={{ alignItems: 'center' }}>
+
+                                {selectedBadge ? (
+                                    <View style={{ alignItems: 'center', width: '100%' }}>
+                                        <TouchableOpacity
+                                            style={{ position: 'absolute', left: 0, top: 0, padding: 10, zIndex: 20 }}
+                                            onPress={() => setSelectedBadge(null)}
+                                        >
+                                            <Ionicons name="arrow-back" size={24} color="#333" />
+                                        </TouchableOpacity>
+
                                         <View style={[styles.iconCircle, { backgroundColor: selectedBadge.color + '20', width: 80, height: 80, borderRadius: 40, marginBottom: 15 }]}>
                                             <FontAwesome5 name={selectedBadge.icon} size={40} color={selectedBadge.color} />
                                         </View>
                                         <Text style={styles.modalTitle}>{selectedBadge.name}</Text>
                                         <Text style={styles.modalDescription}>{selectedBadge.description}</Text>
 
-
+                                        <View style={{ marginTop: 20, width: '100%' }}>
+                                            <Text style={{ textAlign: 'center', marginBottom: 5, color: '#666' }}>
+                                                {selectedBadge.progress} / {selectedBadge.target}
+                                            </Text>
+                                            <View style={styles.progressBarBg}>
+                                                <View
+                                                    style={[
+                                                        styles.progressBarFill,
+                                                        {
+                                                            width: `${Math.min(100, (selectedBadge.progress / selectedBadge.target) * 100)}%`,
+                                                            backgroundColor: selectedBadge.earned ? selectedBadge.color : '#bdbdbd'
+                                                        }
+                                                    ]}
+                                                />
+                                            </View>
+                                            <Text style={{ textAlign: 'center', marginTop: 5, fontSize: 12, color: '#999' }}>
+                                                {selectedBadge.earned
+                                                    ? (selectedBadge.nextTier ? `Próximo nível: ${selectedBadge.nextTier}` : 'Nível máximo!')
+                                                    : 'Bloqueado'}
+                                            </Text>
+                                        </View>
+                                    </View>
+                                ) : (
+                                    <View style={{ width: '100%', maxHeight: 400 }}>
+                                        <Text style={styles.modalTitle}>Todas as Conquistas</Text>
+                                        <ScrollView contentContainerStyle={{ paddingVertical: 10, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                            {userBadges.map((badge) => (
+                                                <TouchableOpacity
+                                                    key={badge.definitionId}
+                                                    style={{ margin: 10, alignItems: 'center' }}
+                                                    onPress={() => setSelectedBadge(badge)}
+                                                >
+                                                    <View style={[styles.badgeIcon, { width: 60, height: 60, borderRadius: 30, backgroundColor: badge.earned ? badge.color + '20' : '#e0e0e0', justifyContent: 'center', alignItems: 'center' }]}>
+                                                        <FontAwesome5
+                                                            name={badge.icon}
+                                                            size={24}
+                                                            color={badge.earned ? badge.color : '#bdbdbd'}
+                                                        />
+                                                    </View>
+                                                    <Text style={{ fontSize: 10, marginTop: 4, color: badge.earned ? '#333' : '#999', width: 70, textAlign: 'center' }} numberOfLines={1}>
+                                                        {badge.name}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </ScrollView>
                                     </View>
                                 )}
                             </View>
@@ -378,7 +522,7 @@ export default function PublicProfileScreen() {
                     </View>
                 </TouchableWithoutFeedback>
             </Modal>
-        </View>
+        </View >
     );
 }
 
@@ -606,5 +750,77 @@ const styles = StyleSheet.create({
         right: 10,
         padding: 5,
         zIndex: 10,
+    },
+    // Badge List Styles
+    badgeRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 20,
+        backgroundColor: '#fff',
+        padding: 5,
+    },
+    badgeIcon: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    badgeName: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#333',
+    },
+    badgeProgressText: {
+        fontSize: 12,
+        color: '#666',
+        fontWeight: '600',
+    },
+    progressBarBg: {
+        height: 6,
+        backgroundColor: '#f0f0f0',
+        borderRadius: 3,
+        marginBottom: 5,
+        overflow: 'hidden',
+    },
+    progressBarFill: {
+        height: '100%',
+        borderRadius: 3,
+    },
+    // Game Card Styles for Profile
+    gameCard: {
+        backgroundColor: '#f9f9f9',
+        borderRadius: 12,
+        padding: 12,
+        marginBottom: 10,
+        borderWidth: 1,
+        borderColor: '#eee',
+    },
+    gameCardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    gameCardTitle: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#333',
+        flex: 1,
+    },
+    gameCardDate: {
+        fontSize: 12,
+        color: '#666',
+        marginLeft: 10,
+    },
+    gameCardStatus: {
+        fontSize: 12,
+        color: '#4CAF50',
+        marginTop: 4,
+        fontWeight: 'bold',
+    },
+    badgeNextGoal: {
+        fontSize: 10,
+        color: '#999',
+        fontStyle: 'italic',
     },
 });

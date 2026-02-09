@@ -3,7 +3,7 @@ import { FontAwesome5 } from '@expo/vector-icons';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Modal, ScrollView, StyleSheet, Switch, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, ScrollView, StyleSheet, Switch, TouchableOpacity, View } from 'react-native';
 
 import { Text } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -15,7 +15,7 @@ export default function GameDetailsScreen() {
     const { id } = useLocalSearchParams();
     const colorScheme = useColorScheme();
     const themeColors = Colors[colorScheme ?? 'light'];
-    const { user } = useUser();
+    const { user, refreshProfile } = useUser();
 
     const [game, setGame] = useState<any>(null);
     const [players, setPlayers] = useState<any[]>([]);
@@ -23,14 +23,43 @@ export default function GameDetailsScreen() {
     const [loading, setLoading] = useState(true);
     const [joining, setJoining] = useState(false);
 
-    // Attendance
-    const [attendanceModalVisible, setAttendanceModalVisible] = useState(false);
-    const [attendanceList, setAttendanceList] = useState<any[]>([]);
-
     useEffect(() => {
         fetchGameDetails();
         fetchPlayers();
     }, [id]);
+
+    // Auto-confirm attendance when game is finished and user is organizer
+    useEffect(() => {
+        if (game && user && game.created_by === user.id && isGameFinished()) {
+            autoConfirmAttendance();
+        }
+    }, [game, user, players]); // Check when players load too
+
+    const autoConfirmAttendance = async () => {
+        // Find players who are just 'confirmed' (not yet attended/no_show)
+        const pendingPlayers = players.filter(p => p.status === 'confirmed');
+
+        if (pendingPlayers.length > 0) {
+            console.log("Auto-confirming players:", pendingPlayers.length);
+            try {
+                // Bulk update 'confirmed' -> 'attended'
+                // We use loop for now as RLS/Supabase Client matches simpler
+                const updates = pendingPlayers.map(p =>
+                    supabase
+                        .from('game_players')
+                        .update({ status: 'attended' })
+                        .eq('game_id', id)
+                        .eq('user_id', p.user_id)
+                );
+
+                await Promise.all(updates);
+                fetchPlayers(); // Refresh to show 'Attended'
+                refreshProfile(); // Update user stats immediately
+            } catch (error) {
+                console.error("Error auto-confirming attendance:", error);
+            }
+        }
+    };
 
     const fetchGameDetails = async () => {
         if (!id) return;
@@ -118,6 +147,11 @@ export default function GameDetailsScreen() {
         } catch (e) {
             return false;
         }
+    };
+
+    // Helper to check if game is "Finished" (e.g., end time passed or just start time passed for simplicity)
+    const isGameFinished = () => {
+        return isGameStarted(); // For now, treat started as "in progress/finished" for attendance purposes
     };
 
     const handleJoinGame = async () => {
@@ -221,61 +255,35 @@ export default function GameDetailsScreen() {
         );
     };
 
-    const handleOpenAttendance = () => {
-        // Initialize attendance list from current players
-        // Default to 'attended' if status is 'confirmed', otherwise keep existing status
-        const initialList = players.map(p => ({
-            // Ensure we have an ID
-            user_id: p.user_id, // This should come from fetchPlayers
-            name: p.name,
-            username: p.username,
-            avatar_url: p.avatar_url,
-            // If already marked as attended/no_show, keep it. Else default to 'attended' (present)
-            status: (p.status === 'attended' || p.status === 'no_show') ? p.status : 'attended'
-        }));
-        setAttendanceList(initialList);
-        setAttendanceModalVisible(true);
-    };
+    const togglePlayerAttendance = async (player: any) => {
+        if (!user || game.created_by !== user.id || !isGameFinished()) return;
 
-    const handleSaveAttendance = async () => {
-        setLoading(true);
+        const newStatus = player.status === 'attended' || player.status === 'confirmed' ? 'no_show' : 'attended';
+
+        // Optimistic Update
+        const updatedPlayers = players.map(p =>
+            p.user_id === player.user_id ? { ...p, status: newStatus } : p
+        );
+        setPlayers(updatedPlayers);
+
         try {
-            // Update each player's status
-            // Ideally should be a bulk update, but for now we iterate (assuming small player count < 20)
-            const updates = attendanceList.map(p =>
-                supabase
-                    .from('game_players')
-                    .update({ status: p.status })
-                    .eq('game_id', id)
-                    .eq('user_id', p.user_id)
-            );
+            const { error } = await supabase
+                .from('game_players')
+                .update({ status: newStatus })
+                .eq('game_id', id)
+                .eq('user_id', player.user_id);
 
-            await Promise.all(updates);
+            if (error) throw error;
 
-            alert('Presenças confirmadas!');
-            setAttendanceModalVisible(false);
-            fetchPlayers(); // Refresh list
-        } catch (error) {
-            console.error('Error saving attendance:', error);
-            alert('Erro ao guardar presenças.');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const toggleAttendance = (userId: string) => {
-        console.log("Toggling attendance for:", userId);
-        if (!userId) {
-            console.error("Attempted to toggle attendance for undefined userId");
-            return;
-        }
-        setAttendanceList(prev => prev.map(p => {
-            if (p.user_id === userId) {
-                console.log("Flipping status for", p.name, "from", p.status);
-                return { ...p, status: p.status === 'attended' ? 'no_show' : 'attended' };
+            // If the modified player is the current user, refresh profile logic
+            if (player.user_id === user?.id) {
+                refreshProfile();
             }
-            return p;
-        }));
+        } catch (error) {
+            console.error('Error updating attendance:', error);
+            alert('Erro ao atualizar presença.');
+            fetchPlayers(); // Revert
+        }
     };
 
     if (loading) {
@@ -294,6 +302,9 @@ export default function GameDetailsScreen() {
         );
     }
 
+    const isOrganizer = user && game && user.id === game.created_by;
+    const gameFinished = isGameFinished();
+
     return (
         <View style={[styles.container, { backgroundColor: '#f5f5f5' }]}>
             <Stack.Screen options={{
@@ -310,7 +321,7 @@ export default function GameDetailsScreen() {
                     </TouchableOpacity>
                 ),
                 headerRight: () => (
-                    (user && game && user.id === game.created_by && game.status !== 'canceled') ? (
+                    (isOrganizer && game.status !== 'canceled' && !gameFinished) ? (
                         <TouchableOpacity
                             onPress={handleCancelGame}
                             style={{ padding: 10, marginRight: 0 }}
@@ -371,21 +382,19 @@ export default function GameDetailsScreen() {
 
                 {/* Players List */}
                 <View style={styles.card}>
-                    <Text style={styles.sectionTitle}>Jogadores ({players.length})</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+                        <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Jogadores ({players.length})</Text>
+                        {isOrganizer && gameFinished && (
+                            <Text style={{ fontSize: 10, color: '#666' }}>Toque para marcar falta</Text>
+                        )}
+                    </View>
+
                     {players.length > 0 ? (
                         players.map((player, index) => (
                             <TouchableOpacity
                                 key={`player-${player.user_id || index}`}
                                 style={styles.playerRow}
-                                onPress={() => {
-                                    console.log('Navigating to profile:', player.user_id);
-                                    if (player.user_id) {
-                                        router.push(`/player/${player.user_id}`);
-                                    } else {
-                                        console.error('User ID is missing for player:', player);
-                                        alert('Erro: Jogador sem ID.');
-                                    }
-                                }}
+                                onPress={() => router.push(`/player/${player.user_id}`)}
                             >
                                 <Image
                                     source={{ uri: player.avatar_url || 'https://via.placeholder.com/150' }}
@@ -394,19 +403,41 @@ export default function GameDetailsScreen() {
                                 <View style={{ marginLeft: 10, flex: 1 }}>
                                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                                         <Text style={styles.playerName}>{player.name || 'Jogador'}</Text>
+
+                                        {/* Status Indicators */}
                                         {player.status === 'attended' && (
-                                            <View style={{ backgroundColor: '#E8F5E9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#E8F5E9', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }}>
+                                                <FontAwesome5 name="check" size={10} color="#4CAF50" style={{ marginRight: 4 }} />
                                                 <Text style={{ color: '#4CAF50', fontSize: 10, fontWeight: 'bold' }}>PRESENTE</Text>
                                             </View>
                                         )}
                                         {player.status === 'no_show' && (
-                                            <View style={{ backgroundColor: '#FFEBEE', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFEBEE', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }}>
+                                                <FontAwesome5 name="times" size={10} color="#F44336" style={{ marginRight: 4 }} />
                                                 <Text style={{ color: '#F44336', fontSize: 10, fontWeight: 'bold' }}>FALTOU</Text>
+                                            </View>
+                                        )}
+                                        {player.status === 'confirmed' && !gameFinished && (
+                                            <View style={{ backgroundColor: '#E3F2FD', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                                                <Text style={{ color: '#2196F3', fontSize: 10, fontWeight: 'bold' }}>INSCRITO</Text>
                                             </View>
                                         )}
                                     </View>
                                     <Text style={styles.playerUsername}>{player.username || '@jogador'}</Text>
                                 </View>
+
+                                {/* Toggle Switch UI for Organizer */}
+                                {isOrganizer && gameFinished && (
+                                    <View style={{ marginLeft: 10 }}>
+                                        <Switch
+                                            value={player.status === 'attended'}
+                                            onValueChange={() => togglePlayerAttendance(player)}
+                                            trackColor={{ false: '#ffcdd2', true: '#C8E6C9' }}
+                                            thumbColor={player.status === 'attended' ? '#4CAF50' : '#F44336'}
+                                            style={{ transform: [{ scaleX: 0.8 }, { scaleY: 0.8 }] }}
+                                        />
+                                    </View>
+                                )}
                             </TouchableOpacity>
                         ))
                     ) : (
@@ -441,14 +472,8 @@ export default function GameDetailsScreen() {
 
             {/* Bottom Action Bar */}
             <View style={styles.bottomBar}>
-                {user && game && user.id === game.created_by && isGameStarted() ? (
-                    <TouchableOpacity
-                        style={[styles.joinButton, { backgroundColor: themeColors.primary }]}
-                        onPress={handleOpenAttendance}
-                    >
-                        <Text style={styles.joinButtonText}>Confirmar Presenças</Text>
-                    </TouchableOpacity>
-                ) : (
+                {/* Hide join button if game finished */}
+                {!gameFinished && (
                     <TouchableOpacity
                         style={[styles.joinButton, { backgroundColor: isJoined ? '#F44336' : themeColors.primary, opacity: joining ? 0.7 : 1 }]}
                         onPress={handleJoinGame}
@@ -463,58 +488,18 @@ export default function GameDetailsScreen() {
                         )}
                     </TouchableOpacity>
                 )}
+                {/* If game finished and organizer, maybe show a "Done" button or just nothing as it's auto-saved */}
+                {gameFinished && isOrganizer && (
+                    <View style={{ alignItems: 'center' }}>
+                        <Text style={{ color: '#666', fontSize: 12 }}>Gestão de presenças ativa</Text>
+                    </View>
+                )}
+                {gameFinished && !isOrganizer && isJoined && (
+                    <View style={{ alignItems: 'center' }}>
+                        <Text style={{ color: themeColors.primary, fontWeight: 'bold' }}>Jogo Terminado</Text>
+                    </View>
+                )}
             </View>
-
-            {/* Attendance Modal */}
-            <Modal
-                visible={attendanceModalVisible}
-                animationType="slide"
-                presentationStyle="pageSheet"
-                onRequestClose={() => setAttendanceModalVisible(false)}
-            >
-                <View style={[styles.container, { backgroundColor: '#fff', paddingTop: 20 }]}>
-                    <View style={styles.modalHeader}>
-                        <Text style={styles.modalTitle}>Confirmar Presenças</Text>
-                        <TouchableOpacity onPress={() => setAttendanceModalVisible(false)}>
-                            <FontAwesome5 name="times" size={24} color="#333" />
-                        </TouchableOpacity>
-                    </View>
-
-                    <ScrollView style={{ flex: 1, padding: 20 }}>
-                        {attendanceList.map((player, index) => (
-                            <View key={`attendance-${player.user_id || index}`} style={styles.attendanceRow}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                    <Image
-                                        source={{ uri: player.avatar_url || 'https://via.placeholder.com/150' }}
-                                        style={styles.playerAvatar}
-                                    />
-                                    <View style={{ marginLeft: 15 }}>
-                                        <Text style={styles.playerName}>{player.name}</Text>
-                                        <Text style={{ fontSize: 12, color: player.status === 'attended' ? '#4CAF50' : '#F44336' }}>
-                                            {player.status === 'attended' ? 'Presente' : 'Faltou'}
-                                        </Text>
-                                    </View>
-                                </View>
-                                <Switch
-                                    value={player.status === 'attended'}
-                                    onValueChange={() => toggleAttendance(player.user_id)}
-                                    trackColor={{ false: '#ffcdd2', true: '#C8E6C9' }}
-                                    thumbColor={player.status === 'attended' ? '#4CAF50' : '#F44336'}
-                                />
-                            </View>
-                        ))}
-                    </ScrollView>
-
-                    <View style={styles.modalFooter}>
-                        <TouchableOpacity
-                            style={[styles.joinButton, { backgroundColor: themeColors.primary, width: '100%' }]}
-                            onPress={handleSaveAttendance}
-                        >
-                            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.joinButtonText}>Salvar Presenças</Text>}
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
         </View>
     );
 }
